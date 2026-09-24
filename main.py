@@ -181,38 +181,9 @@ def run_cli():
             break
 
 
-def run_chainlit():
-    """Run the Chainlit web UI."""
-    import subprocess
-    import sys
-
-    cmd = [
-        sys.executable, "-m", "chainlit", "run", "app.py",
-        "-h", config.CHAINLIT_HOST,
-        "-p", str(config.CHAINLIT_PORT)
-    ]
-    print(f"Starting Chainlit on {config.CHAINLIT_HOST}:{config.CHAINLIT_PORT}...")
-    subprocess.run(cmd)
-
-
 def main():
-    """Main entry point - supports both CLI and Chainlit modes."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Chinook Database Chat")
-    parser.add_argument(
-        "--mode", "-m",
-        choices=["cli", "chainlit", "web"],
-        default="cli",
-        help="Run mode: cli (default) or chainlit/web for web UI"
-    )
-    args = parser.parse_args()
-
-    if args.mode in ("chainlit", "web"):
-        run_chainlit()
-    else:
-        run_cli()
-
+    """Main entry point - CLI only."""
+    run_cli()
 
 if __name__ == "__main__":
     main()

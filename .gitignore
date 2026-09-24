@@ -8,7 +8,6 @@ __pycache__/
 .venv/
 .kilo/
 data/
-.chainlit/
 
 # Environment files
 .env
