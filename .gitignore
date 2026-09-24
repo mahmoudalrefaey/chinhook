@@ -6,6 +6,9 @@ npm-debug.log
 __pycache__/
 *.pyc
 .venv/
+.kilo/
+data/
+.chainlit/
 
 # Environment files
 .env

@@ -2,30 +2,24 @@ import os
 import json
 from openai import AzureOpenAI
 from dotenv import load_dotenv
+
 from scripts.db_module import (
     get_relevant_schema,
     run_sql_query,
     tools,
-    conn,
 )
+
+import config
 
 load_dotenv()
 
-# ---------- Azure OpenAI Configuration ----------
-AZURE_OPENAI_KEY = os.environ["AZURE_OPENAI_KEY"]
-AZURE_OPENAI_ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]
-DEPLOYMENT_NAME = os.environ["DEPLOYMENT_NAME"]
-MODEL_NAME = os.environ["MODEL_NAME"]
-
-azure_client = AzureOpenAI(
-    api_key=AZURE_OPENAI_KEY,
-    api_version="2024-10-21",
-    azure_endpoint=AZURE_OPENAI_ENDPOINT,
-)
-
 
 # ---------- Chat Agent ----------
-def chat_with_db(question: str) -> str:
+def chat_with_db(question: str, model_name: str = None) -> str:
+    """Main chat function with model selection support."""
+    if model_name is None:
+        model_name = config.DEFAULT_MODEL
+
     schema_context = get_relevant_schema(question)
 
     messages = [
@@ -44,8 +38,11 @@ def chat_with_db(question: str) -> str:
         {"role": "user", "content": question},
     ]
 
-    resp = azure_client.chat.completions.create(
-        model=DEPLOYMENT_NAME,
+    client = config.create_azure_client(model_name)
+    deployment = config.get_model_config(model_name)["deployment"]
+
+    resp = client.chat.completions.create(
+        model=deployment,
         messages=messages,
         tools=tools,
     )
@@ -62,8 +59,8 @@ def chat_with_db(question: str) -> str:
                 "content": str(result)
             })
 
-        final = azure_client.chat.completions.create(
-            model=DEPLOYMENT_NAME,
+        final = client.chat.completions.create(
+            model=deployment,
             messages=messages,
         )
         return final.choices[0].message.content
@@ -71,14 +68,20 @@ def chat_with_db(question: str) -> str:
     return msg.content
 
 
-def ask(question: str) -> str:
+def ask(question: str, model_name: str = None) -> str:
     """Main entry point for querying the database with natural language."""
-    return chat_with_db(question)
+    return chat_with_db(question, model_name)
 
 
-def generate_response(user_query: str, db_context: str) -> str:
+def generate_response(user_query: str, db_context: str, model_name: str = None) -> str:
     """Generate a response using Azure OpenAI with database context."""
-    response = azure_client.chat.completions.create(
+    if model_name is None:
+        model_name = config.DEFAULT_MODEL
+
+    client = config.create_azure_client(model_name)
+    deployment = config.get_model_config(model_name)["deployment"]
+
+    response = client.chat.completions.create(
         messages=[
             {
                 "role": "system",
@@ -94,11 +97,17 @@ def generate_response(user_query: str, db_context: str) -> str:
         top_p=1.0,
         frequency_penalty=0.0,
         presence_penalty=0.0,
-        model=DEPLOYMENT_NAME,
+        model=deployment,
     )
     return response.choices[0].message.content
 
 
+def get_available_models() -> list[str]:
+    """Return list of available model names."""
+    return list(config.MODEL_CONFIGS.keys())
+
+
 if __name__ == "__main__":
     question = input("Ask a question about the database: ")
-    print(ask(question))
+    model = input(f"Model ({', '.join(get_available_models())}) [gpt-4.1-nano]: ").strip() or "gpt-4.1-nano"
+    print(ask(question, model))

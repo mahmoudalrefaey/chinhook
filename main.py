@@ -1,45 +1,12 @@
-#!/usr/bin/env python3
-"""
-Main entry point for the Chinook Database Chat Application.
-
-This module provides a command-line interface for interacting with the
-Chinook database using natural language queries powered by Azure OpenAI.
-
-Environment Variables Required:
-    AZURE_OPENAI_KEY: Azure OpenAI API key
-    AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
-    DEPLOYMENT_NAME: Azure OpenAI deployment name
-    MODEL_NAME: Model name for generation
-    DATABASE_URL: PostgreSQL connection string
-    DATABASE_PASSWORD: Database password (if not in DATABASE_URL)
-"""
-
-import os
 import sys
-from dotenv import load_dotenv
-from scripts.generator import ask, generate_response
-from scripts.db_module import index_schema, conn
+import os
 
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-def check_environment():
-    """Verify all required environment variables are set."""
-    required_vars = [
-        "AZURE_OPENAI_KEY",
-        "AZURE_OPENAI_ENDPOINT",
-        "DEPLOYMENT_NAME",
-        "MODEL_NAME",
-        "DATABASE_URL",
-    ]
-    
-    missing = [var for var in required_vars if not os.environ.get(var)]
-    
-    if missing:
-        print("Error: Missing required environment variables:")
-        for var in missing:
-            print(f"  - {var}")
-        print("\nPlease set these in your .env file or environment.")
-        return False
-    return True
+from scripts.generator import ask, get_available_models
+from scripts.indexer import run_index_check, get_index_status
+import config
 
 
 def print_welcome():
@@ -49,10 +16,15 @@ def print_welcome():
     print("=" * 60)
     print("\nCommands:")
     print("  - Type your question in natural language")
-    print("  - 'index'  : Re-index the database schema")
-    print("  - 'help'   : Show this help message")
-    print("  - 'quit'   : Exit the application")
+    print("  - 'index'     : Re-index the database schema")
+    print("  - 'status'    : Check index status")
+    print("  - 'model'     : Show/switch model (nano/mini)")
+    print("  - 'internal'  : Toggle internal process preview")
+    print("  - 'help'      : Show this help message")
+    print("  - 'quit'      : Exit the application")
     print("-" * 60)
+    print(f"Available models: {', '.join(get_available_models())}")
+    print(f"Current model: {config.DEFAULT_MODEL}")
 
 
 def print_help():
@@ -63,69 +35,183 @@ def print_help():
     print("  - Show me all albums by AC/DC")
     print("  - Total sales by country in 2023")
     print("\nSpecial Commands:")
-    print("  - index  : Rebuild the vector index for schema search")
-    print("  - help   : Show this help")
-    print("  - quit   : Exit")
+    print("  - index     : Rebuild the vector index for schema search")
+    print("  - status    : Show index status (DB vs Qdrant)")
+    print("  - model     : Show current model or 'model nano|mini' to switch")
+    print("  - internal  : Toggle internal process preview (on/off)")
+    print("  - help      : Show this help")
+    print("  - quit      : Exit")
 
 
-def main():
-    """Main application loop."""
-    load_dotenv()
-    
+def check_environment():
+    """Verify all required environment variables are set."""
+    valid, missing = config.validate_config()
+    if not valid:
+        print("Error: Missing required environment variables:")
+        for var in missing:
+            print(f"  - {var}")
+        print("\nPlease set these in your .env file or environment.")
+        return False
+    return True
+
+
+def run_cli():
+    """Run the CLI interface."""
     if not check_environment():
         sys.exit(1)
-    
+
     print_welcome()
-    
-    # Check if index needs to be built
-    from scripts.db_module import qdrant, COLLECTION
-    if not qdrant.collection_exists(COLLECTION):
-        print("\nSchema index not found. Building index...")
-        index_schema(conn)
-        print("Index built successfully!\n")
-    
+
+    # Auto-index on startup
+    if config.AUTO_INDEX_ON_STARTUP:
+        print("\nChecking index status...")
+        try:
+            count = run_index_check()
+            print(f"Index ready ({count} tables)\n")
+        except Exception as e:
+            print(f"Index check failed: {e}\n")
+
+    current_model = config.DEFAULT_MODEL
+    show_internal = True
+
     while True:
         try:
             user_query = input("\nYou: ").strip()
-            
+
             if not user_query:
                 continue
-            
+
             # Handle special commands
             cmd = user_query.lower()
             if cmd in ['quit', 'exit', 'bye', 'q']:
                 print("\nGoodbye!")
                 break
-            
+
             if cmd == 'help':
                 print_help()
                 continue
-            
+
             if cmd == 'index':
                 print("\nRe-indexing schema...")
-                index_schema(conn)
-                print("Done!")
+                try:
+                    from scripts.indexer import run_full_reindex
+                    count = run_full_reindex()
+                    print(f"Done! ({count} tables indexed)")
+                except Exception as e:
+                    print(f"Error: {e}")
                 continue
-            
+
+            if cmd == 'status':
+                try:
+                    status = get_index_status()
+                    print(f"\nDB Tables: {status['db_tables']}")
+                    print(f"Qdrant Tables: {status['qdrant_tables']}")
+                    print(f"Needs Re-index: {'Yes' if status['needs_reindex'] else 'No'}")
+                    if status['changed_tables']:
+                        print(f"Changed Tables: {', '.join(status['changed_tables'])}")
+                except Exception as e:
+                    print(f"Error: {e}")
+                continue
+
+            if cmd == 'model':
+                print(f"\nCurrent model: {current_model}")
+                print(f"Available: {', '.join(get_available_models())}")
+                continue
+
+            if cmd.startswith('model '):
+                parts = cmd.split()
+                if len(parts) > 1:
+                    model = parts[1]
+                    if model in get_available_models():
+                        current_model = model
+                        print(f"Model switched to: {model}")
+                    else:
+                        print(f"Unknown model: {model}")
+                continue
+
+            if cmd == 'internal':
+                show_internal = not show_internal
+                print(f"Internal process preview: {'ON' if show_internal else 'OFF'}")
+                continue
+
+            if cmd.startswith('internal '):
+                parts = cmd.split()
+                if len(parts) > 1:
+                    val = parts[1].lower()
+                    if val in ('on', 'true', 'yes', '1'):
+                        show_internal = True
+                        print("Internal process preview: ON")
+                    elif val in ('off', 'false', 'no', '0'):
+                        show_internal = False
+                        print("Internal process preview: OFF")
+                    else:
+                        print("Usage: internal on|off")
+                continue
+
             # Process natural language query
             print("\nProcessing...")
-            response = ask(user_query)
-            
-            print("\n" + "=" * 60)
-            print("Response:")
-            print("=" * 60)
-            print(response)
-            print("=" * 60)
-            
+            try:
+                response = ask(user_query, current_model)
+
+                if show_internal:
+                    print("\n" + "=" * 60)
+                    print("Internal Process Preview:")
+                    print("=" * 60)
+                    from scripts.db_module import get_relevant_schema
+                    schema = get_relevant_schema(user_query)
+                    print(f"Schema Retrieved:\n{schema}")
+                    print(f"Model Used: {current_model}")
+                    print("=" * 60)
+
+                print("\n" + "=" * 60)
+                print("Response:")
+                print("=" * 60)
+                print(response)
+                print("=" * 60)
+
+            except Exception as e:
+                print(f"\nError: {e}")
+                print("Please try again or type 'help' for assistance.")
+
         except KeyboardInterrupt:
             print("\n\nInterrupted. Goodbye!")
             break
         except EOFError:
             print("\n\nGoodbye!")
             break
-        except Exception as e:
-            print(f"\nError: {e}")
-            print("Please try again or type 'help' for assistance.")
+
+
+def run_chainlit():
+    """Run the Chainlit web UI."""
+    import subprocess
+    import sys
+
+    cmd = [
+        sys.executable, "-m", "chainlit", "run", "app.py",
+        "-h", config.CHAINLIT_HOST,
+        "-p", str(config.CHAINLIT_PORT)
+    ]
+    print(f"Starting Chainlit on {config.CHAINLIT_HOST}:{config.CHAINLIT_PORT}...")
+    subprocess.run(cmd)
+
+
+def main():
+    """Main entry point - supports both CLI and Chainlit modes."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Chinook Database Chat")
+    parser.add_argument(
+        "--mode", "-m",
+        choices=["cli", "chainlit", "web"],
+        default="cli",
+        help="Run mode: cli (default) or chainlit/web for web UI"
+    )
+    args = parser.parse_args()
+
+    if args.mode in ("chainlit", "web"):
+        run_chainlit()
+    else:
+        run_cli()
 
 
 if __name__ == "__main__":
