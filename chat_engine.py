@@ -9,11 +9,12 @@ The retrieval, SQL execution and tool definitions all come from scripts.db_modul
 orchestration is repeated here. Nothing in scripts/ or config.py is read differently or
 modified.
 
-Behaviour is kept identical to the command line version on purpose, including leaving the
-temperature unset on the model call.
+Behaviour matches the command line version, including using temperature=0 on both model
+calls.
 """
 
 import json
+import re
 import time
 
 import config
@@ -163,7 +164,14 @@ def answer(question, model_name=None, on_stage=None):
         result["ok"] = True
 
     except Exception as exc:
-        result["error"] = f"{type(exc).__name__}: {exc}"
+        # sqlglot's own ParseError embeds real ANSI escape codes to underline the exact bad
+        # token when printed to a terminal, which is exactly where this error can come from:
+        # validate_sql() calls sqlglot before run_sql_query()'s own try/except even starts, so
+        # a query malformed enough to fail parsing (rather than just fail on Postgres) reaches
+        # here, not there. A terminal renders those escape codes as intended. A browser has no
+        # idea what to do with them and shows the leftover bracket fragments as garbage text.
+        message = re.sub(r"\x1b\[[0-9;]*m", "", str(exc))
+        result["error"] = f"{type(exc).__name__}: {message}"
         result["needs_restart"] = "InFailedSqlTransaction" in type(exc).__name__
 
     result["timings"]["total"] = time.perf_counter() - started
