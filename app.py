@@ -66,7 +66,12 @@ def text_to_html(text):
 
     for line in lines:
         stripped = line.strip()
-        numbered = stripped[:2].rstrip(".").isdigit() if stripped[:1].isdigit() else False
+        # This runs on a growing partial string while an answer is still typing itself out,
+        # not just on finished text. partition never raises even when the separator it is
+        # looking for has not been typed yet, which split(..., 1)[1] does the moment a line
+        # is mid-stream nothing but a bare digit like "1" with no period after it yet.
+        marker, sep, rest = stripped.partition(".")
+        numbered = bool(sep) and marker.isdigit()
         bulleted = stripped.startswith(("- ", "* "))
 
         if numbered or bulleted:
@@ -74,7 +79,7 @@ def text_to_html(text):
             if list_tag and list_tag != tag:
                 flush()
             list_tag = tag
-            content = stripped.split(".", 1)[1].strip() if numbered else stripped[2:]
+            content = rest.strip() if numbered else stripped[2:]
             list_items.append(f"<li>{content}</li>")
             continue
 
