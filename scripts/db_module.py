@@ -162,10 +162,21 @@ def ensure_collection():
         )
 
 
+def stable_point_id(table_name: str) -> int:
+    """Deterministic point id for a table, stable across process restarts.
+
+    Python's built-in hash() is randomized per process (PYTHONHASHSEED), so the same table
+    name produced a different id every run. That meant every re-index inserted a fresh
+    duplicate of each table instead of updating the existing point, and retrieval quality
+    degraded a little more with each restart as duplicates crowded out real variety.
+    """
+    return int(hashlib.sha256(table_name.encode()).hexdigest()[:8], 16)
+
+
 def index_table(table_def: str, fingerprint: dict) -> PointStruct:
     """Create a point for a table with its fingerprint in payload."""
     table_name = fingerprint["table_name"]
-    point_id = abs(hash(table_name)) % (2**31)
+    point_id = stable_point_id(table_name)
     return PointStruct(
         id=point_id,
         vector=embed(table_def),
@@ -210,7 +221,7 @@ def incremental_reindex(changed_tables: list[str]):
             points.append(index_table(defs_by_table[table_name], fingerprint))
         else:
             # Table was dropped - delete from Qdrant
-            point_id = abs(hash(table_name)) % (2**31)
+            point_id = stable_point_id(table_name)
             qdrant.delete(QDRANT_COLLECTION, [point_id])
 
     if points:
@@ -259,12 +270,19 @@ def run_sql_query(query: str):
     if not validate_sql(query):
         return {"error": "Only SELECT queries are allowed."}
 
-    with conn.cursor() as cur:
-        cur.execute("SET statement_timeout = 3000;")
-        cur.execute(query)
-        cols = [d[0] for d in cur.description]
-        rows = cur.fetchmany(50)
-        return {"columns": cols, "rows": rows}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = 3000;")
+            cur.execute(query)
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchmany(50)
+            return {"columns": cols, "rows": rows}
+    except Exception as e:
+        # conn is a single connection shared by every caller. Without this rollback, a
+        # failed query left it in an aborted transaction and every query after it failed
+        # too, for anyone, until the process was restarted.
+        conn.rollback()
+        return {"error": str(e)}
 
 
 # ---------- Tools ----------

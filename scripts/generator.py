@@ -45,6 +45,7 @@ def chat_with_db(question: str, model_name: str = None) -> str:
         model=deployment,
         messages=messages,
         tools=tools,
+        temperature=0,
     )
     msg = resp.choices[0].message
 
@@ -62,6 +63,7 @@ def chat_with_db(question: str, model_name: str = None) -> str:
         final = client.chat.completions.create(
             model=deployment,
             messages=messages,
+            temperature=0,
         )
         return final.choices[0].message.content
 

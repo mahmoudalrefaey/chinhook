@@ -117,6 +117,7 @@ def answer(question, model_name=None, on_stage=None):
             model=deployment,
             messages=messages,
             tools=tools,
+            temperature=0,
         )
         result["timings"]["generate"] = time.perf_counter() - mark
 
@@ -155,7 +156,7 @@ def answer(question, model_name=None, on_stage=None):
 
         stage(STAGE_SUMMARISE)
         mark = time.perf_counter()
-        final = client.chat.completions.create(model=deployment, messages=messages)
+        final = client.chat.completions.create(model=deployment, messages=messages, temperature=0)
         result["timings"]["summarise"] = time.perf_counter() - mark
 
         result["answer"] = final.choices[0].message.content
