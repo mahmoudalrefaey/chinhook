@@ -39,6 +39,23 @@ STAGE_GENERATE = "Writing the query"
 STAGE_EXECUTE = "Running it against the database"
 STAGE_SUMMARISE = "Putting the answer together"
 
+# The interface draws these as a row of nodes and lights each one up as it happens. The
+# keys match the keys used in the timings dictionary returned by answer().
+PIPELINE = [
+    {"key": "question", "title": "Question", "detail": "Plain language in"},
+    {"key": "retrieve", "title": "Retrieve", "detail": "Ollama embedding, Qdrant search"},
+    {"key": "generate", "title": "Write SQL", "detail": "Azure OpenAI with a tool call"},
+    {"key": "execute", "title": "Query", "detail": "Postgres, read only"},
+    {"key": "summarise", "title": "Answer", "detail": "Azure OpenAI writes the reply"},
+]
+
+STAGE_TO_KEY = {
+    STAGE_RETRIEVE: "retrieve",
+    STAGE_GENERATE: "generate",
+    STAGE_EXECUTE: "execute",
+    STAGE_SUMMARISE: "summarise",
+}
+
 
 def available_models():
     """Model names the configuration knows about, in declaration order."""
@@ -150,3 +167,45 @@ def answer(question, model_name=None, on_stage=None):
 
     result["timings"]["total"] = time.perf_counter() - started
     return result
+
+
+def compare(question, models=None, on_progress=None):
+    """Answer the same question with each model in turn.
+
+    The models run one after another rather than at the same time. The database connection
+    in scripts/db_module.py is a single module level object shared by everything, and
+    psycopg2 connections are not safe to use from two places at once, so running the models
+    concurrently would risk interleaving two queries on one connection.
+    """
+    models = models or available_models()
+    results = {}
+    for name in models:
+        if on_progress:
+            on_progress(name)
+        results[name] = answer(question, name)
+    return results
+
+
+def schema_overview():
+    """Every table in the database with its columns and row count, read live.
+
+    Nothing is hardcoded. This is the same information the indexer embeds, so it doubles as
+    a way to see what the model is given to work with.
+    """
+    from scripts.db_module import conn, get_table_names
+
+    tables = []
+    for name in get_table_names(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT column_name, data_type
+                   FROM information_schema.columns
+                   WHERE table_schema = 'public' AND table_name = %s
+                   ORDER BY ordinal_position""",
+                (name,),
+            )
+            columns = cur.fetchall()
+            cur.execute(f'SELECT COUNT(*) FROM "{name}"')
+            count = cur.fetchone()[0]
+        tables.append({"table": name, "columns": columns, "rows": count})
+    return tables
