@@ -4,6 +4,7 @@ import psycopg2
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams, Filter, FieldCondition, MatchValue
 
+import config
 from config import (
     DATABASE_URL,
     QDRANT_URL,
@@ -152,6 +153,62 @@ def compare_fingerprints(db_fp: dict, qdrant_fp: dict) -> tuple[bool, list[str]]
     return len(changed) > 0, changed
 
 
+# ---------- Automatic evidence generation ----------
+#
+# A table named "invoice_line" doesn't say anywhere that it represents a completed sale
+# rather than, say, a price list or a playlist membership. Column names and types alone
+# were not enough signal for the model to tell those apart, which is what let "top selling
+# tracks" get answered by sorting on price instead of actual units sold.
+#
+# Rather than have a person write that distinction down once (which goes stale the moment
+# the data changes, and has to be redone by hand for a different database entirely), a
+# short description of what each table actually represents is generated automatically from
+# its structure and a few of its real rows, at indexing time. It is regenerated automatically
+# whenever a table's fingerprint changes, so it never goes stale and needs no code changes
+# if the whole database were swapped for something else.
+
+def get_sample_rows(conn, table_name: str, limit: int = 3) -> list[tuple]:
+    """A few real rows from a table, used to ground the automatically generated evidence."""
+    with conn.cursor() as cur:
+        cur.execute(f'SELECT * FROM "{table_name}" LIMIT %s', (limit,))
+        return cur.fetchall()
+
+
+def generate_evidence(table_def: str, sample_rows: list[tuple]) -> str:
+    """Infer what a table represents in the real world, from its structure and real data.
+
+    Uses the nano deployment since this is a short, well-defined summarisation task, not
+    something that needs the larger model's reasoning.
+    """
+    sample_text = "\n".join(str(row) for row in sample_rows) or "(table is currently empty)"
+    prompt = (
+        "You are documenting a database table for another AI that will write SQL queries "
+        "against it. Given the table's structure and a few real rows, write ONE short "
+        "sentence stating what this table actually represents in the real world. "
+        "Specifically say whether it represents a completed transaction or event with "
+        "measurable facts (a sale, a booking, a play), a reference or lookup table, or a "
+        "pure relationship between two other tables with no facts of its own. Be concrete, "
+        "not generic, and base this only on the structure and values shown, not the name.\n\n"
+        f"Table definition: {table_def}\n"
+        f"Sample rows:\n{sample_text}"
+    )
+    try:
+        client = config.create_azure_client("gpt-4.1-nano")
+        deployment = config.get_model_config("gpt-4.1-nano")["deployment"]
+        resp = client.chat.completions.create(
+            model=deployment,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_completion_tokens=120,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        # A transient failure generating evidence for one table should not fail the whole
+        # index. The table still gets indexed, just without the extra context this run.
+        print(f"Evidence generation failed for this table, indexing it without it: {e}")
+        return ""
+
+
 # ---------- Indexing ----------
 def ensure_collection():
     """Create Qdrant collection if it doesn't exist."""
@@ -174,13 +231,21 @@ def stable_point_id(table_name: str) -> int:
 
 
 def index_table(table_def: str, fingerprint: dict) -> PointStruct:
-    """Create a point for a table with its fingerprint in payload."""
+    """Create a point for a table with its fingerprint in payload.
+
+    The stored table_def is enriched with automatically generated evidence about what the
+    table represents, so both retrieval (which tables look relevant to a question) and the
+    final SQL generation benefit from it, with no change needed in either of those places.
+    """
     table_name = fingerprint["table_name"]
     point_id = stable_point_id(table_name)
+    sample_rows = get_sample_rows(conn, table_name)
+    evidence = generate_evidence(table_def, sample_rows)
+    enriched_def = f"{table_def}\n  Represents: {evidence}" if evidence else table_def
     return PointStruct(
         id=point_id,
-        vector=embed(table_def),
-        payload={"table_def": table_def, "fingerprint": fingerprint},
+        vector=embed(enriched_def),
+        payload={"table_def": enriched_def, "fingerprint": fingerprint},
     )
 
 
@@ -249,8 +314,29 @@ def check_and_index():
         return incremental_reindex(changed)
 
 
+SMALL_SCHEMA_THRESHOLD = 25
+
+
 def get_relevant_schema(question: str, top_k=5) -> str:
-    """Retrieve relevant table definitions for a question."""
+    """Table definitions relevant to a question.
+
+    Retrieval only helps once a schema is too big to show the model in full. Below that, it
+    is pure downside: similarity search can rank a table low for reasons that have nothing to
+    do with whether it is actually needed, the way a literal word in the question ("tracks")
+    pulled unrelated track-named tables above the one table that actually holds sales data.
+    Below the threshold, every table is returned and nothing gets silently left out.
+    """
+    total = qdrant.count(QDRANT_COLLECTION).count
+
+    if total <= SMALL_SCHEMA_THRESHOLD:
+        points = qdrant.scroll(
+            collection_name=QDRANT_COLLECTION,
+            limit=total,
+            with_payload=True,
+            with_vectors=False,
+        )[0]
+        return "\n".join(p.payload["table_def"] for p in points)
+
     hits = qdrant.query_points(
         collection_name=QDRANT_COLLECTION,
         query=embed(question),
