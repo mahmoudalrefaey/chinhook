@@ -24,15 +24,28 @@
 }
 
 /* Remove the parts that identify the page as Streamlit. */
+/* header[data-testid="stHeader"] and its inner [data-testid="stToolbar"] are deliberately
+   NOT hidden here, even though visually empty once the pieces below are hidden. The button
+   that reopens a collapsed sidebar (stExpandSidebarButton) lives inside that same toolbar,
+   and display:none on an ancestor removes its whole subtree from layout with no way for
+   descendant CSS to undo it. Hiding the specific unwanted pieces individually keeps the
+   header's own box in the layout (invisible, since nothing inside it is visible) without
+   taking that control down with it. */
 #MainMenu,
 footer,
-header[data-testid="stHeader"],
-[data-testid="stToolbar"],
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
 [data-testid="stAppDeployButton"],
 .stAppDeployButton {
     display: none !important;
+}
+
+header[data-testid="stHeader"] {
+    background: transparent;
+}
+
+[data-testid="stToolbar"] {
+    background: transparent;
 }
 
 html, body, [data-testid="stAppViewContainer"], .stApp {
