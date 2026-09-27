@@ -1,7 +1,8 @@
-"""Web interface for asking the Chinhook database questions in plain language.
+"""Web interface for asking the Chinook database questions in plain language.
 
-Run it with the command in README_UI.md. The command line version in main.py still works
-exactly as before, and nothing it depends on is changed by this file.
+Run it with the command in the "Getting started" section of README.md. The command line
+version in main.py still works exactly as before, and nothing it depends on is changed by
+this file.
 
 Chat bubbles are written as raw HTML rather than through st.chat_message or a keyed
 container. Streamlit wraps every markdown element in its own internal layout box, and one of
@@ -13,26 +14,17 @@ writes directly, sitting inside that box rather than being that box, sidesteps t
 the div sizes itself to its own content regardless of what the ancestor around it measured.
 """
 
-import html
 import time
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from ui.render import (
-    as_frame,
-    bubble,
-    pipeline_html,
-    text_to_html,
-    thinking,
-)
-
 ROOT = Path(__file__).parent
 ICON = ROOT / "assets" / "icon.svg"
 
 st.set_page_config(
-    page_title="Chinhook Database Chat",
+    page_title="Chinook Database Chat",
     page_icon=str(ICON) if ICON.exists() else None,
     layout="wide",
     initial_sidebar_state="auto",
@@ -55,23 +47,6 @@ load_styles()
 
 
 # ---------- bubble rendering ----------
-#
-# Model answers use a small set of predictable markdown: numbered lists, occasional bullets,
-# **bold**, and plain paragraphs. Rather than pull in a markdown dependency for that, the
-# handful of patterns actually seen in testing are converted directly. Anything outside
-# those patterns is escaped and shown as plain text rather than guessed at.
-
-
-
-
-
-
-
-
-
-
-
-
 
 def stream_bubble(placeholder, text, size=3, pause=0.012):
     """Type the answer into its own bubble div, chunk by chunk, in place."""
@@ -83,24 +58,30 @@ def stream_bubble(placeholder, text, size=3, pause=0.012):
         time.sleep(pause)
 
 try:
+    # ui.render itself imports chat_engine, and everything chat_engine pulls in behind it
+    # (config, the agent workflow, the database module) at the top of its own file, so its
+    # import has to be inside this same try along with the others below. It used to sit at
+    # the top of this file instead, well before this point, which meant any failure in that
+    # whole chain had already happened and crashed the page with a raw traceback by the time
+    # this except clause could have caught anything.
+    from ui.render import as_frame, bubble, escape_text, pipeline_html, text_to_html, thinking
     import chat_engine
     import config
     from scripts.indexer import get_index_status, run_full_reindex
 except Exception as exc:  # noqa: BLE001
+    # escape_text is one of the names this same try was attempting to import, so it cannot
+    # be trusted to exist if the failure happened before that import completed. The
+    # standard library's own escaping has no such dependency.
+    import html as _html
+
     st.markdown(
         '<div class="notice"><strong>Cannot reach the backing services.</strong><br>'
-        f"{type(exc).__name__}: {exc}<br><br>"
+        f"{_html.escape(f'{type(exc).__name__}: {exc}')}<br><br>"
         "Check that the Postgres and Qdrant containers are running, that Ollama is up, "
         "and that the values in <code>.env</code> are filled in.</div>",
         unsafe_allow_html=True,
     )
     st.stop()
-
-
-# ---------- pipeline diagram ----------
-
-
-
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -118,8 +99,6 @@ def cached_schema():
     return chat_engine.schema_overview()
 
 
-
-
 def render_chart(frame):
     """Draw a bar chart when the shape of the result makes one meaningful."""
     if frame is None or not 2 <= len(frame) <= 30:
@@ -134,9 +113,12 @@ def render_chart(frame):
 
 def render_detail(result):
     with st.expander("How this answer was produced"):
+        # Driven by which stages actually recorded a timing, not by the full list of stages
+        # that exist. A greeting or a clarifying question never reaches retrieval, SQL or
+        # execution, and showing every node as finished regardless said otherwise.
         st.markdown(
             pipeline_html(
-                completed=[n["key"] for n in chat_engine.PIPELINE],
+                completed=list(result.get("timings", {}).keys()),
                 timings=result.get("timings", {}),
             ),
             unsafe_allow_html=True,
@@ -150,7 +132,7 @@ def render_detail(result):
             })
             st.markdown(
                 '<div class="panel-label">Tables retrieved: '
-                + html.escape(", ".join(tables) or "none")
+                + escape_text(", ".join(tables) or "none")
                 + "</div>",
                 unsafe_allow_html=True,
             )
@@ -261,9 +243,12 @@ def render_clarification_controls(index, result):
 
     if submit:
         selection = ", ".join(option for option in chosen if option)
-        st.session_state.answered[index] = True
         if not selection:
+            # Nothing was actually picked, most likely a mis-click on Send. The question
+            # stays open rather than being marked answered, which used to remove the
+            # controls for good the moment this happened with nothing selected.
             return
+        st.session_state.answered[index] = True
         st.session_state.pending = selection
         st.rerun()
 
@@ -282,28 +267,31 @@ def render_trace(result):
         for task in tasks:
             verdict = task.get("verification")
             badge = {"pass": "ok", "fail": "warn", "unknown": ""}.get(verdict, "")
-            pill = f'<span class="pill pill-{badge}">{verdict}</span>' if badge else ""
+            pill = (
+                f'<span class="pill pill-{badge}">{escape_text(verdict)}</span>'
+                if badge else ""
+            )
             tables = ", ".join(task.get("schema_tables") or []) or "no tables"
             reuse = ", reused from earlier in this chat" if task.get("schema_from_cache") else ""
             st.markdown(
-                f'<div class="stat"><span class="stat-label">{task.get("task_id")} &middot; '
-                f'{task.get("intent")}</span>'
+                f'<div class="stat"><span class="stat-label">{escape_text(task.get("task_id"))} &middot; '
+                f'{escape_text(task.get("intent"))}</span>'
                 f'<span class="stat-value">{task.get("row_count", 0)} rows</span></div>'
-                f'<div class="timing">{html.escape(task.get("question", ""))} &middot; '
-                f'{task.get("status")} {pill}</div>'
-                f'<div class="timing">Tables: {html.escape(tables)}{reuse}</div>',
+                f'<div class="timing">{escape_text(task.get("question", ""))} &middot; '
+                f'{escape_text(task.get("status"))} {pill}</div>'
+                f'<div class="timing">Tables: {escape_text(tables)}{reuse}</div>',
                 unsafe_allow_html=True,
             )
             if task.get("semantic"):
                 st.markdown(
-                    f'<div class="timing">Grounding: {html.escape(task["semantic"])}</div>',
+                    f'<div class="timing">Grounding: {escape_text(task["semantic"])}</div>',
                     unsafe_allow_html=True,
                 )
             if task.get("sql"):
                 st.code(task["sql"], language="sql")
             if task.get("failure_reason"):
                 st.markdown(
-                    f'<div class="timing">Failed: {html.escape(task["failure_reason"])}</div>',
+                    f'<div class="timing">Failed: {escape_text(task["failure_reason"])}</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -360,7 +348,7 @@ def chat_session():
 # ---------- sidebar ----------
 
 with st.sidebar:
-    st.markdown('<div class="side-brand">Chinhook <span>Chat</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="side-brand">Chinook <span>Chat</span></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="side-heading">Model</div>', unsafe_allow_html=True)
     models = chat_engine.available_models()
@@ -391,7 +379,7 @@ with st.sidebar:
         st.markdown(
             '<div class="stat"><span class="stat-label">Status</span>'
             '<span class="stat-value">unavailable</span></div>'
-            f'<div class="timing">{type(exc).__name__}</div>',
+            f'<div class="timing">{escape_text(type(exc).__name__)}</div>',
             unsafe_allow_html=True,
         )
 
@@ -440,7 +428,7 @@ chat_tab, compare_tab, schema_tab = st.tabs(["Chat", "Compare models", "Schema"]
 with chat_tab:
     st.markdown('<div class="page-title">Ask the database a question</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="page-subtitle">Questions are turned into SQL, run against the Chinhook '
+        '<div class="page-subtitle">Questions are turned into SQL, run against the Chinook '
         "database, and answered in plain language. Every answer carries the tables that were "
         "searched and the query that ran.</div>",
         unsafe_allow_html=True,
@@ -562,7 +550,10 @@ with compare_tab:
 
     comparison = st.session_state.comparison
     if comparison:
-        st.markdown(f'<div class="asked">{comparison["question"]}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="asked">{escape_text(comparison["question"])}</div>',
+            unsafe_allow_html=True,
+        )
         columns = st.columns(len(comparison["results"]))
 
         fastest = min(
@@ -575,7 +566,7 @@ with compare_tab:
                 total = result.get("timings", {}).get("total", 0)
                 badge = '<span class="pill pill-ok">fastest</span>' if total == fastest else ""
                 st.markdown(
-                    f'<div class="compare-head"><span class="compare-name">{name}</span>'
+                    f'<div class="compare-head"><span class="compare-name">{escape_text(name)}</span>'
                     f"{badge}</div>",
                     unsafe_allow_html=True,
                 )
@@ -586,8 +577,14 @@ with compare_tab:
                 )
 
                 if result["ok"] and result.get("answer"):
-                    st.markdown(f'<div class="compare-answer">{result["answer"]}</div>',
-                                unsafe_allow_html=True)
+                    # Rendered the same way the main chat renders an answer: as Markdown,
+                    # sanitised against an allowlist. This panel used to place the answer
+                    # directly into the page with no filtering of any kind, the one spot in
+                    # the app where that was true.
+                    st.markdown(
+                        f'<div class="compare-answer">{text_to_html(result["answer"])}</div>',
+                        unsafe_allow_html=True,
+                    )
                     if result.get("sql"):
                         st.markdown('<div class="panel-label">SQL</div>', unsafe_allow_html=True)
                         st.code(result["sql"], language="sql")
@@ -636,6 +633,6 @@ with schema_tab:
     except Exception as exc:  # noqa: BLE001
         st.markdown(
             f'<div class="notice"><strong>Could not read the schema.</strong><br>'
-            f"{type(exc).__name__}: {exc}</div>",
+            f"{escape_text(f'{type(exc).__name__}: {exc}')}</div>",
             unsafe_allow_html=True,
         )
