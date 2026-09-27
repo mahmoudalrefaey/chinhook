@@ -116,7 +116,6 @@ def build_graph():
 
     graph.add_node("route", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_route))
     graph.add_node("greeting", _timed(STAGE_SUMMARISE)(nodes.node_greeting))
-    graph.add_node("conversation_answer", _timed(STAGE_SUMMARISE)(nodes.node_conversation_answer))
     graph.add_node("understand", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_understand))
     graph.add_node("clarify", _timed(STAGE_SUMMARISE)(nodes.node_clarify))
     graph.add_node("plan", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_plan))
@@ -136,14 +135,12 @@ def build_graph():
         nodes.route_after_route,
         {
             "greeting": "greeting",
-            "conversation_answer": "conversation_answer",
             "clarify": "clarify",
             "understand": "understand",
             "plan": "plan",
         },
     )
     graph.add_edge("greeting", END)
-    graph.add_edge("conversation_answer", END)
 
     graph.add_conditional_edges(
         "understand",

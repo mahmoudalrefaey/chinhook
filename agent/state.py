@@ -286,6 +286,7 @@ class Understanding:
     """The structured reading of one user message, produced by the query understanding node."""
 
     clarity: Clarity = "clear"
+    kind: Literal["request", "correction", "about_chat"] = "request"
     resolved_question: str = ""
     context_notes: str = ""           # how this message was resolved against the chat
     semantic_mappings: list[dict[str, str]] = field(default_factory=list)

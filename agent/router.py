@@ -182,40 +182,35 @@ _ROUTE_SYSTEM = (
     "You decide where a message in a conversation about a database should go. The database "
     "is whatever is connected, and the catalog below, when there is one, is its schema. "
     "Reply with one JSON object and nothing else:\n"
-    '{"route": "greeting" | "conversation" | "meta" | "clarification" | "followup" | '
-    '"database", "reason": "a few words"}\n\n'
+    '{"route": "greeting" | "clarification" | "conversation" | "database", '
+    '"reason": "a few words"}\n\n'
     "The routes mean:\n"
     '- "greeting": small talk with nothing being asked. Never anything with a question mark.\n'
-    '- "conversation": a question about this conversation itself. What was asked, what was '
-    "said, what came earlier, what the previous answer was, how many questions there have "
-    "been. It is about the messages, not about the records in the database.\n"
-    '- "meta": a question about the assistant: what it understood, what it can do, what it '
-    "has looked at, whether it can answer something, what data it has.\n"
     '- "clarification": an answer to a question the assistant has just asked.\n'
-    '- "followup": a change or continuation of the question just asked, where the answer is '
-    "still rows in the database. Changing a filter, a limit, a sort or an entity.\n"
-    '- "database": the answer is rows in the database.\n\n'
+    '- "conversation": the message is about this conversation or about the assistant, rather '
+    "than about the rows. What was said earlier, what the assistant understood, what it can "
+    "do.\n"
+    '- "database": anything to be answered, including a message that holds a question about '
+    "the conversation and a question about the rows together.\n\n"
     "Rules:\n"
-    "- A question about the messages of this conversation is never a database question, "
-    "even when it mentions something the database holds. \"What was the first thing I asked?\" "
-    "is about the conversation. \"Who was our first customer?\" is about the data.\n"
+    "- Judge the whole message, not a word or a clause inside it. A message can hold more "
+    "than one thing, and a message that asks about the assistant and also asks about the "
+    "data is a database question, because the part about the data still has to be answered.\n"
+    "- A question about the messages of this conversation, or about the assistant, is a "
+    "conversation question. \"What was the first thing I asked?\" and \"what can you do?\" "
+    "are about the conversation. \"Who was our first customer?\" is about the data.\n"
     "- A request for data, a number, a list, a total or a comparison is a database question, "
-    "however it is phrased.\n"
+    "however it is phrased, and so is anything that continues or changes the question just "
+    "asked.\n"
     "- A message that answers the question the assistant asked in its last reply is a "
     "clarification. A message that asks something else entirely is not, even when a "
     "question is still open.\n"
-    "- Something that continues the previous question without repeating it is a followup.\n"
-    "- A short message that changes one part of the question just asked is a followup, "
-    "however few words it is. If the last question was about rows and this message changes "
-    "the filter, the limit, the entity or the wording of that same question, the answer is "
-    "still rows in the database. Judge it by what it is asking for, not by its length or by "
-    "the word it opens with.\n"
-    "- A question about the assistant asks about the assistant. If the words after the "
-    "question word are a country, a place, a person, a number or a thing, the question is "
-    "about the data, not about the conversation.\n"
-    "- If a message could be either, pick the one a careful reader would, and say why in the "
-    "reason. Only say the message is a conversation question when it really is about the "
-    "messages."
+    "- A message that pushes back on how the assistant read something, or says what the user "
+    "is or is not asking for, is a database question. The user is not asking for what the "
+    "message literally says, and what they want is the thing they were not understood to be "
+    "asking, which is answered from the rows.\n"
+    "- Choose the route a careful reader would, and say why in the reason. Only call a "
+    "message a conversation question when it really is about the conversation."
 )
 
 
@@ -279,96 +274,63 @@ def classify(
     if is_small_talk(message):
         return RouteDecision(route="greeting", reason="small talk with no question in it")
 
-    decided = _decide_by_shape(message, session)
-    if decided is not None:
-        return decided
-
     return _ask_model(message, session, model, None)
 
 
-# Words that make a message about the messages rather than about the rows. Kept deliberately
-# narrow: it is worse to send a question about the chat to the database than the other way
-# round, so anything ambiguous is left to the model rather than claimed here.
-_ABOUT_THE_CHAT = re.compile(
-    r"\b(what\s+(did|do|does|was|were)\s+(you|i|we)|what'?s\s+my|my\s+(first|last|previous)|"
-    r"the\s+(first|last|previous|earlier)\s+(question|answer|thing|message)|"
-    r"what\s+(was|were)\s+your|did\s+i\s+ask|have\s+i\s+asked|"
-    r"what\s+have\s+i\s+asked|what\s+was\s+your|your\s+(last|previous|first)\s+"
-    r"(answer|reply|question)|earlier|before\s+that|you\s+said|you\s+asked|"
-    r"we\s+(talked|discussed|said)|the\s+conversation)\b",
-    re.IGNORECASE,
-)
-
-
 def _decide_by_shape(message: str, session) -> Optional[RouteDecision]:
-    """The messages that can be routed without asking anyone.
+    """Small talk, and nothing else.
 
-    Three of them, and each is decided on what the message is about rather than on how it is
-    phrased: a question about the exchange, a message naming something the database holds,
-    and a short question that plainly continues the last one.
+    A message is only taken away from the model here when the whole of it is unmistakably
+    one thing that has no question in it. Anything that could be read two ways, and anything
+    that names something the database holds, goes to the model with the schema in front of
+    it. Deciding a compound message from a keyword in one clause of it is what made "what
+    tables do you have and how many customers are there" get answered as a question about
+    the tables alone.
     """
-    if _is_meta_question(message):
-        return RouteDecision(route="meta", reason="it asks about the assistant")
-    if _ABOUT_THE_CHAT.search(message or ""):
-        return RouteDecision(
-            route="conversation", reason="it asks about the exchange, not about the rows"
-        )
-
-    try:
-        from agent import schema as schema_store
-
-        if schema_store.mentions_catalog_entity(message):
-            return RouteDecision(
-                route="database", reason="it names something this database holds"
-            )
-    except Exception:  # noqa: BLE001
-        pass
-
-    text = (message or "").strip()
-    words = normalize(text).split()
-    last_was_data = bool(session.turns) and any(
-        (task.get("answer_summary") or "") for task in session.turns[-1].tasks
-    )
-    if last_was_data and 1 < len(words) <= 8 and text.endswith("?"):
-        # A short question straight after an answer continues that answer, unless it named
-        # something the database holds, which was settled above.
-        return RouteDecision(
-            route="followup", reason="a short question continuing the answer just given"
-        )
+    if is_small_talk(message):
+        return RouteDecision(route="greeting", reason="small talk with no question in it")
     return None
 
 
-# A question about the assistant rather than about the data is recognisable by its shape,
-# and getting it wrong sends a question about itself into a query.
-_META = re.compile(
-    r"""^\s*(what|which)\s+(do\s+you|can\s+you|are\s+you|have\s+you|should\s+you|did\s+you)
-        .*\b(understand|interpret|make\s+of|think|mean|do|can|able|offer|support
-              |capabilit|retrieve|look\s+up|search|see|know|have|got|gotten)\b""",
-    re.IGNORECASE | re.VERBOSE,
-)
-_META_SUBJECTS = re.compile(
-    r"\b(you|your|yourself)\b.*\b(understand|interpret|capabilit|do|can|able|retrieve|"
-    r"look\s+up|search|data|information|have|got|seen|show|offer|support)\b",
-    re.IGNORECASE,
-)
+def _schema_hint(message: str) -> str:
+    """What the connected schema says about a message, in a sentence the model can use.
 
+    A fact about the data, not a decision about the message: it says which tables the
+    words line up with, and the router's job is still the model's.
+    """
+    try:
+        from agent import schema as schema_store
 
-def _is_meta_question(message: str) -> bool:
-    return bool(_META.match(message or "") or _META_SUBJECTS.search(message or ""))
+        named = schema_store.mentions_table_word(message)
+    except Exception:  # noqa: BLE001
+        return ""
+    if not named:
+        return ""
+    return (
+        "This message names things the connected database holds: "
+        + ", ".join(named)
+        + ". That does not make the whole message a data question, and a data question "
+        "inside a longer message still has to be answered."
+    )
 
 
 def _ask_model(
     message: str, session, model: str, pending: Optional[Clarification]
 ) -> RouteDecision:
     catalog = ""
+    named_tables: list[str] = []
     try:
         from agent import schema as schema_store
 
         catalog = schema_store.catalog_text()
+        named_tables = schema_store.mentions_table_word(message)
     except Exception:  # noqa: BLE001
         catalog = ""
 
     parts = [f"Message: {message}"]
+    hint = _schema_hint(message)
+    if hint:
+        parts.append(hint)
     if pending is not None:
         parts.append(
             "The assistant asked the user this and is waiting for an answer:\n"
@@ -393,10 +355,13 @@ def _ask_model(
     route = str((payload or {}).get("route") or "").strip().lower()
     if route not in ROUTES:
         route = "database"
-    if pending is None and _is_meta_question(message):
-        # A question about what the assistant did is never a question about the rows, no
-        # matter how the model read it.
-        route = "meta"
+    if route in {"conversation", "meta"}:
+        # Whether a message is about the chat or about the data is decided where the history,
+        # the catalog and the message are all in one place: the reading of the message, which
+        # can also split a message that holds both. Sending it down that one path from here
+        # is what stops a message containing a question about the tables and a question about
+        # the rows from being answered as the first of those alone.
+        route = "database"
     return RouteDecision(
         route=route,  # type: ignore[arg-type]
         reason=str((payload or {}).get("reason") or "").strip(),

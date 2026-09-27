@@ -77,14 +77,22 @@ def statement_limit(sql: Optional[str]) -> Optional[int]:
 
 
 def referenced_tables(sql: Optional[str]) -> list[str]:
-    """Table names the query reads, case-normalised to the real catalog spelling."""
+    """Table names the query reads, case-normalised to the real catalog spelling.
+
+    A schema-qualified table is reported with its schema, because a name that says which
+    schema it is in says something a bare name does not.
+    """
     if not sql:
         return []
     try:
         expression = sqlglot.parse_one(sql, read="postgres")
     except Exception:
         return []
-    return [table.name for table in expression.find_all(sqlglot.exp.Table)]
+    names = []
+    for table in expression.find_all(sqlglot.exp.Table):
+        name = f"{table.db}.{table.name}" if table.db else table.name
+        names.append(name)
+    return names
 
 
 def has_group_by(sql: Optional[str]) -> bool:

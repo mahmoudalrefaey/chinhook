@@ -49,7 +49,11 @@ def node_validate(state: GraphState) -> dict:
         if problem is None and _FORBIDDEN.search(_strip_literals(sql)):
             problem = "the query contains a statement that is not allowed here"
         if problem is None:
-            unknown = [t for t in verification.referenced_tables(sql) if t not in schema_store.catalog()]
+            unknown = [
+                table
+                for table in verification.referenced_tables(sql)
+                if not _is_known_table(table)
+            ]
             if unknown:
                 problem = (
                     f"the query reads {', '.join(unknown)}, which this database does not have"
@@ -69,6 +73,27 @@ def node_validate(state: GraphState) -> dict:
     task.validation_error = None
     trace = _trace(state, "validate", "accepted", detail=f"{task.task_id}: safe to run", task=task.task_id)
     return {"phase": "validated", "trace": trace}
+
+
+# The catalog the search holds is the database's own tables. Postgres also has read-only
+# system catalogs that every database can query, and a question about the shape of the
+# database is often answered from one of them, so they are not "tables this database does
+# not have". Anything named pg_ is excluded for the same reason.
+_SYSTEM_SCHEMAS = {"information_schema", "pg_catalog"}
+
+
+def _is_known_table(name: str) -> bool:
+    """Whether a table the query names is one this database actually has.
+
+    A schema-qualified name is checked on both halves: the table has to be one this database
+    has, or to live in a schema that every database has.
+    """
+    schema, _, bare = name.rpartition(".")
+    if bare in schema_store.catalog():
+        return True
+    if schema:
+        return schema.lower() in _SYSTEM_SCHEMAS or schema.lower().startswith("pg_")
+    return name in schema_store.catalog()
 
 
 def _strip_literals(sql: str) -> str:

@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "langgraph>=1.2.12",
+    # Answers are written in Markdown and the interface renders it. Python-Markdown is
+    # used rather than a hand-written converter so tables, lists and emphasis come out
+    # the way they were written, and the Dockerfile's "uv sync --frozen" installs it.
+    "markdown>=3.5",
     "ollama>=0.6.2",
     "openai>=3.16.2",
     "pandas>=3.0.6",

@@ -3,130 +3,60 @@
 The functions here take plain values and return HTML or a dataframe. They are kept apart
 from the page so that what a reply looks like is one readable piece, and so that the page
 itself is only about wiring: what to show, and in what order.
+
+Answers arrive as Markdown and are converted by Python-Markdown rather than by a converter
+written here. That is the point of using the library: tables, ordered and unordered lists,
+emphasis, headings, block quotes, inline code and fenced blocks all come out the way they
+were written, and a construct nobody thought to special-case still renders instead of
+showing up as raw punctuation.
+
+The output is HTML placed inside the chat bubble, which is why the page writes it itself
+rather than handing the Markdown to Streamlit: see the note in app.py about why the bubble
+has to be a div the page writes.
 """
 
-import html
 import re
 
+import markdown as markdown_lib
 import pandas as pd
 
 import chat_engine
 
+# The extensions that cover what answers actually use. "extra" is a bundle containing
+# fenced code, tables, sane lists, footnotes and a few others.
+_MARKDOWN = markdown_lib.Markdown(
+    extensions=["extra", "sane_lists", "admonition"],
+    output_format="html",
+)
+
+# Raw HTML in a model's output would be passed straight through by the converter, so the
+# handful of tags that can execute or fetch are removed afterwards. This is a guard, not a
+# general purpose sanitiser, and it exists because the reply is rendered as live HTML.
+_DANGEROUS_TAGS = re.compile(
+    r"<\s*/?\s*(script|style|iframe|object|embed|form|link|meta|svg)\b[^>]*>.*?"
+    r"(?:<\s*/\s*\1\s*>)?",
+    re.IGNORECASE | re.DOTALL,
+)
+_EVENT_HANDLERS = re.compile(r"\son[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.IGNORECASE)
+
 
 # ---------- answers ----------
 
-def split_table_row(line):
-    """The cells of one markdown table row, or None when the line is not a table row."""
-    stripped = line.strip()
-    if not stripped.startswith("|") or not stripped.endswith("|"):
-        return None
-    return [cell.strip() for cell in stripped.strip("|").split("|")]
+def markdown_to_html(text: str) -> str:
+    """Markdown to HTML, with anything executable in the source removed first.
 
-
-def is_table_separator(line):
-    cells = split_table_row(line)
-    if not cells or not all(cells):
-        return False
-    return all(re.fullmatch(r":?-{2,}:?", cell or "") for cell in cells)
-
-
-def inline(text):
-    """**bold** and `code` inside a line of text."""
-    text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
-    return re.sub(r"`([^`]+?)`", r"<code>\1</code>", text)
-
-
-def render_table(header, body):
-    """One markdown table as an HTML table, padded so every row has the same columns."""
-    columns = max([len(header)] + [len(row) for row in body] or [len(header)])
-    out = ['<table class="answer-table"><thead><tr>']
-    for position in range(columns):
-        cell = header[position] if position < len(header) else ""
-        out.append(f"<th>{inline(cell)}</th>")
-    out.append("</tr></thead><tbody>")
-    for row in body:
-        out.append("<tr>")
-        for position in range(columns):
-            cell = row[position] if position < len(row) else ""
-            out.append(f"<td>{inline(cell)}</td>")
-        out.append("</tr>")
-    out.append("</tbody></table>")
-    return "".join(out)
+    Escaping the raw tags before conversion rather than after, so a tag that survived would
+    be shown as text instead of being interpreted as markup.
+    """
+    source = _DANGEROUS_TAGS.sub("", text or "")
+    source = _EVENT_HANDLERS.sub("", source)
+    _MARKDOWN.reset()
+    return _MARKDOWN.convert(source)
 
 
 def text_to_html(text):
-    """Markdown used in an answer, rendered as HTML.
-
-    Handles the forms answers actually take: headings, tables, numbered and bulleted lists,
-    **bold** and plain paragraphs. Blank lines are spacing rather than content, so runs of
-    them are dropped instead of becoming empty paragraphs. Anything not recognised is
-    escaped and shown as text rather than guessed at.
-    """
-    escaped = html.escape(text)
-    lines = escaped.split("\n")
-    blocks = []
-    list_items = []
-    list_tag = None
-
-    def flush():
-        nonlocal list_items, list_tag
-        if list_items:
-            blocks.append(f"<{list_tag}>" + "".join(list_items) + f"</{list_tag}>")
-            list_items = []
-            list_tag = None
-
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.strip()
-
-        # A table is a header row, a separator row and then the body rows.
-        if split_table_row(line) and index + 1 < len(lines) and is_table_separator(lines[index + 1]):
-            flush()
-            header = split_table_row(line)
-            index += 2
-            body = []
-            while index < len(lines) and split_table_row(lines[index]):
-                body.append(split_table_row(lines[index]))
-                index += 1
-            blocks.append(render_table(header, body))
-            continue
-
-        # This runs on a growing partial string while an answer is still typing itself out,
-        # not just on finished text. partition never raises even when the separator it is
-        # looking for has not been typed yet, which split(..., 1)[1] does the moment a line
-        # is mid-stream nothing but a bare digit like "1" with no period after it yet.
-        marker, sep, rest = stripped.partition(".")
-        numbered = bool(sep) and marker.isdigit()
-        bulleted = stripped.startswith(("- ", "* "))
-
-        if numbered or bulleted:
-            tag = "ol" if numbered else "ul"
-            if list_tag and list_tag != tag:
-                flush()
-            list_tag = tag
-            content = rest.strip() if numbered else stripped[2:]
-            list_items.append(f"<li>{inline(content)}</li>")
-            index += 1
-            continue
-
-        flush()
-        if not stripped:
-            index += 1
-            continue
-
-        heading = re.fullmatch(r"(#{1,6})\s+(.*)", stripped)
-        if heading:
-            level = min(6, len(heading.group(1)))
-            blocks.append(f"<h{level}>{inline(heading.group(2))}</h{level}>")
-        elif stripped.isupper() and len(stripped) > 3 and not stripped.startswith("|"):
-            blocks.append(f"<p><strong>{inline(stripped)}</strong></p>")
-        else:
-            blocks.append(f"<p>{inline(stripped)}</p>")
-        index += 1
-
-    flush()
-    return "".join(blocks) or f"<p>{escaped}</p>"
+    """A reply, rendered. Kept under the name the page imports it by."""
+    return markdown_to_html(text)
 
 
 def as_frame(result):

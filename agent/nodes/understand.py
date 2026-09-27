@@ -132,17 +132,85 @@ def _task_clarifications(tasks: list[TaskState], question: str) -> list[Clarific
     return held
 
 
-def _default_clarification_text(resolved: str, options: list[str]) -> str:
-    if options:
-        return (
-            f"I understand you want to know about {resolved.rstrip('?').lower()}, but more "
-            f"than one part of the database fits that. Do you mean "
-            f"{', '.join(options[:-1])} or {options[-1]}?"
-        )
-    return (
-        f"I need one more detail before I can answer: I read your message as "
-        f"\"{resolved.rstrip('?')}\", which is not specific enough to pick the right data."
+def _default_clarification_text(tasks: list, options: list[str]) -> str:
+    """A question to put to the user, built from what they asked, when the model gave none.
+
+    Only reached when the reading of the message called something ambiguous but did not say
+    what to ask. The wording is the user's own task text rather than a stock sentence, so a
+    question that has to be asked here still refers to the thing they actually asked.
+    """
+    asked = next(
+        (task.question for task in tasks if (task.question or task.raw).strip()),
+        "",
     )
+    if options:
+        return f"{asked.rstrip('?')}: {' or '.join(options)}?" if asked else (
+            f"Which of these did you mean: {', '.join(options)}?"
+        )
+    if asked:
+        return f"{asked.rstrip('?')} — what exactly should I look up?"
+    return "What would you like me to look up?"
+
+
+# Words that carry no meaning about what was asked, so a task made only of them is
+# indistinguishable from one that was invented.
+_FUNCTION_WORDS = {
+    "how", "many", "much", "what", "which", "who", "whom", "whose", "where", "when",
+    "why", "is", "are", "was", "were", "am", "be", "do", "does", "did", "can", "could",
+    "would", "should", "will", "shall", "may", "might", "must", "have", "has", "had",
+    "there", "here", "the", "a", "an", "of", "in", "on", "at", "to", "for", "from",
+    "with", "and", "or", "but", "if", "then", "than", "that", "this", "these", "those",
+    "it", "its", "me", "my", "i", "you", "your", "we", "our", "us", "they", "them",
+    "get", "got", "give", "show", "tell", "list", "please", "about", "not", "no", "yes",
+    "know", "want", "need", "make", "made", "say", "said", "ask", "asked", "question",
+    "questions", "answer", "answered", "history", "conversation", "previous", "last",
+    "first", "again", "still", "also", "just", "only", "ever", "never", "one", "two",
+}
+
+
+def _content_words(text: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(word) > 2 and word not in _FUNCTION_WORDS
+    }
+
+
+def _grounded_in_the_conversation(tasks: list[TaskState], message: str, previous) -> bool:
+    """Whether the tasks are about something the user actually said.
+
+    The reading of a message may restate a short follow-up in words the user did not use,
+    which is fine. It may not invent a subject the user has not raised at all, in this
+    message or the one before it, and that is what a message objecting to being
+    misunderstood looks like from here.
+    """
+    said = _content_words(message)
+    if previous is not None:
+        said |= _content_words(previous.user)
+    if not said:
+        return True
+    asked = set()
+    for task in tasks:
+        asked |= _content_words(task.question)
+        asked |= _content_words(" ".join(task.entities or []))
+        for spec in task.filters or []:
+            asked |= _content_words(str(spec.get("value") or ""))
+            asked |= _content_words(str(spec.get("column_hint") or ""))
+    return bool(asked & said)
+
+
+def _last_answered_request(session):
+    """The most recent turn the assistant actually answered something for, or None.
+
+    A correction is a complaint about the last thing that was got wrong, and the thing that
+    was got wrong is the last request that produced an answer. A greeting, a question the
+    assistant asked, and a turn that ended in asking the user something are not that, which
+    is why this looks for an answered task rather than taking the previous turn.
+    """
+    for turn in reversed(session.turns):
+        if any(task.get("answer_summary") for task in turn.tasks):
+            return turn
+    return None
 
 
 def node_understand(state: GraphState) -> dict:
@@ -161,6 +229,7 @@ def node_understand(state: GraphState) -> dict:
     last_clarification = session.clarification_history[-1]["question"] if session.clarification_history else ""
 
     parts = [f"Database catalog:\n{catalog}"]
+    previous = session.turns[-1] if session.turns else None
     if resumed_answer:
         parts.append(
             f"The user asked:\n{question}\n\n"
@@ -171,6 +240,13 @@ def node_understand(state: GraphState) -> dict:
         )
     else:
         parts.append(f"Current user message:\n{question}")
+    if previous is not None:
+        parts.append(
+            "The request the user may be referring to, if this message is about the previous "
+            "exchange rather than a new one:\n"
+            f"  they asked: {previous.user}\n"
+            f"  it was understood as: {previous.question}"
+        )
     if context:
         parts.append(f"Conversation so far in this chat:\n{context}")
     if last_clarification and not resumed_answer:
@@ -192,6 +268,9 @@ def node_understand(state: GraphState) -> dict:
     if payload is None:
         understanding = _fallback_understanding(question)
     else:
+        kind = str(payload.get("kind") or "request").lower().strip()
+        if kind not in {"request", "correction", "about_chat"}:
+            kind = "request"
         clarity = str(payload.get("clarity") or "clear").lower().strip()
         if clarity not in {"clear", "ambiguous", "insufficient_context", "unsupported"}:
             clarity = "clear"
@@ -205,6 +284,65 @@ def node_understand(state: GraphState) -> dict:
             # The model said the message was answerable but produced no task for it. Treat
             # the message itself as the task rather than answering nothing.
             tasks = [TaskState(task_id="T1", raw=question, question=question, intent="other")]
+
+        # A message that asks nothing, or a set of tasks about something the user has not
+        # raised in this message or the one before it, is not something to run. Either way it
+        # is what a message saying "that is not what I asked" looks like from here, so the
+        # earlier request is read again as the subject rather than an invented one being run.
+        asks_nothing = "?" not in (state["question"] or "")
+        ungrounded = bool(tasks) and not _grounded_in_the_conversation(
+            tasks, state["question"], previous
+        )
+        gave_nothing = asks_nothing and clarity in {"insufficient_context", "ambiguous"}
+        if previous is not None and (kind == "correction" or ungrounded or gave_nothing):
+            recovered_turn = _last_answered_request(session)
+            if recovered_turn is not None:
+                recovered = recovered_turn.question or recovered_turn.user
+                trace = trace + [
+                    {
+                        "node": "understand",
+                        "event": "correction",
+                        "detail": f"the tasks were not in what the user said: {state['question']}",
+                        "recovering": recovered,
+                    }
+                ]
+                retry, spent = llm.chat_json(
+                    model,
+                    _UNDERSTAND_SYSTEM,
+                    "\n\n".join(
+                        parts
+                        + [
+                            f"The user sent this message:\n{state['question']}\n\n"
+                            "It is not a question of its own. It is the user telling you that "
+                            "what you produced from the message before is not what they asked "
+                            "for. The request to answer is the one they were making:\n"
+                            f"{recovered}\n\n"
+                            "Answer that request. Do not answer this message, and do not answer "
+                            "anything that is not in it."
+                        ]
+                    ),
+                )
+                usage.add(spent)
+                kind = "correction"
+                question = recovered
+                original = original or recovered
+                retried = [
+                    _task_from_spec(spec, index, recovered)
+                    for index, spec in enumerate((retry or {}).get("tasks") or [])
+                    if isinstance(spec, dict) and str(spec.get("question") or "").strip()
+                ]
+                # Whatever the reading produced, the turn is about the recovered request,
+                # so the bare request is used when nothing usable came back.
+                tasks = retried or [TaskState(
+                    task_id="T1", raw=recovered, question=recovered, intent="other"
+                )]
+                # The first reading's verdict was about a message that turned out not to be
+                # a request, so the recovered request is read on its own terms from here.
+                clarity = str((retry or {}).get("clarity") or "clear").lower().strip()
+                if clarity not in {"clear", "ambiguous", "insufficient_context", "unsupported"}:
+                    clarity = "clear"
+                text = ""
+                options = []
 
         unsupported_reason = str(payload.get("unsupported_reason") or "").strip()
         if clarity == "unsupported" and tasks:
@@ -251,19 +389,26 @@ def node_understand(state: GraphState) -> dict:
                     clarity = "clear"
                 else:
                     held = _hold_only_what_the_question_is_about(tasks, text, question)
-                    clarification = Clarification(
-                        question=text or _default_clarification_text(
-                            str(payload.get("resolved_question") or question), options
-                        ),
-                        options=options,
-                        reason=str(spec.get("reason") or ""),
-                        scope="request" if not held else "task",
-                        original_question=question,
-                        task_ids=[t.task_id for t in held],
-                        pending_tasks=held,
-                    )
+                    if not held and tasks and all(
+                        _question_is_about_what_the_task_already_says(entry) for entry in tasks
+                    ):
+                        # Every task already says which of the options it means, so there is
+                        # nothing left to put to the user. This is what stops a message that
+                        # settles its own subject from being questioned about it.
+                        clarity = "clear"
+                    else:
+                        clarification = Clarification(
+                            question=text or _default_clarification_text(tasks, options),
+                            options=options,
+                            reason=str(spec.get("reason") or ""),
+                            scope="request" if not held else "task",
+                            original_question=question,
+                            task_ids=[t.task_id for t in held],
+                            pending_tasks=held,
+                        )
 
         understanding = Understanding(
+            kind=kind,  # type: ignore[arg-type]
             clarity=clarity,  # type: ignore[arg-type]
             resolved_question=str(payload.get("resolved_question") or question).strip(),
             context_notes=str(payload.get("context_notes") or "").strip(),

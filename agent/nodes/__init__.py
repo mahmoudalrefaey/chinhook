@@ -23,7 +23,7 @@ a question in it. Split by what a stage is for:
 graph.py imports the nodes from this package, so the graph itself is unchanged by the split.
 """
 
-from agent.nodes.answer import node_answer, node_conversation_answer
+from agent.nodes.answer import node_answer
 from agent.nodes.clarify import node_clarify
 from agent.nodes.common import (
     BASE_SQL_RULES,
@@ -65,7 +65,6 @@ __all__ = [
     "STAGE_UNDERSTAND",
     "node_answer",
     "node_clarify",
-    "node_conversation_answer",
     "node_execute",
     "node_generate",
     "node_greeting",

@@ -11,6 +11,7 @@
     --brand-wash: #FDF3F2;
     --page: #FAFAFA;
     --surface: #FFFFFF;
+    --surface-alt: #F7F7F6;
     --ink: #1A1A1A;
     --muted: #6B6B6B;
     --faint: #9A9A9A;
@@ -304,6 +305,98 @@ h1, h2, h3, h4 {
 .bubble-bot p:last-child { margin-bottom: 0; }
 .bubble-bot ol, .bubble-bot ul { margin: 0.3rem 0; padding-left: 1.3rem; }
 .bubble-bot li { margin-bottom: 0.2rem; }
+
+/* ---------- Answer typography ----------
+   Answers are Markdown converted to HTML, so they arrive carrying the full set of elements
+   rather than only paragraphs and lists. These rules are scoped to the bot bubble so a
+   reply reads as a document: section headings, a real table, a quotation, inline code. */
+
+.bubble-bot > :first-child { margin-top: 0; }
+.bubble-bot > :last-child { margin-bottom: 0; }
+
+.bubble-bot h1, .bubble-bot h2, .bubble-bot h3,
+.bubble-bot h4, .bubble-bot h5, .bubble-bot h6 {
+    color: var(--ink);
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+    margin: 1.1rem 0 0.4rem;
+    font-weight: 650;
+}
+.bubble-bot h1 { font-size: 1.3rem; }
+.bubble-bot h2 { font-size: 1.16rem; }
+.bubble-bot h3 { font-size: 1.04rem; }
+.bubble-bot h4, .bubble-bot h5, .bubble-bot h6 { font-size: 0.96rem; }
+
+.bubble-bot strong { font-weight: 650; color: var(--ink); }
+.bubble-bot em { font-style: italic; }
+
+.bubble-bot code {
+    background: var(--surface-alt);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.08em 0.34em;
+    font-size: 0.88em;
+}
+
+.bubble-bot pre {
+    background: var(--surface-alt);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 0.9rem;
+    overflow-x: auto;
+    margin: 0.6rem 0;
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+.bubble-bot pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+}
+
+.bubble-bot blockquote {
+    margin: 0.6rem 0;
+    padding: 0.1rem 0 0.1rem 0.85rem;
+    border-left: 3px solid var(--brand);
+    color: var(--muted);
+}
+.bubble-bot blockquote p:last-child { margin-bottom: 0; }
+
+.bubble-bot hr {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 0.9rem 0;
+}
+
+/* A table is the shape a result of rows takes, so it is given room to breathe: its own
+   scroll when it is wider than the bubble, a clear header, and alternating rows so a
+   long list can be followed down the page. */
+.bubble-bot table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.7rem 0 0.9rem;
+    font-size: 0.9rem;
+    display: block;
+    overflow-x: auto;
+}
+.bubble-bot thead { display: table; width: 100%; table-layout: auto; }
+.bubble-bot tbody { display: table; width: 100%; table-layout: auto; }
+.bubble-bot th, .bubble-bot td {
+    text-align: left;
+    padding: 0.42rem 0.7rem;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+}
+.bubble-bot th {
+    background: var(--surface-alt);
+    color: var(--ink);
+    font-weight: 650;
+    border-bottom: 2px solid var(--line);
+}
+.bubble-bot tbody tr:nth-child(even) { background: var(--surface-alt); }
+.bubble-bot td + td, .bubble-bot th + th { border-left: 1px solid var(--line); }
+.bubble-bot tbody tr:last-child td { border-bottom: none; }
 
 /* ---------- Thinking indicator ---------- */
 

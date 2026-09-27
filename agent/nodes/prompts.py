@@ -8,7 +8,8 @@ _UNDERSTAND_SYSTEM = (
     "You turn a user's message about a database into structured understanding. "
     "You do not write SQL and you do not answer the user.\n\n"
     "Reply with one JSON object, no prose, using exactly these keys:\n"
-    '{\n  "clarity": "clear" | "ambiguous" | "insufficient_context" | "unsupported",\n'
+    '{\n  "kind": "request" | "correction" | "about_chat",\n'
+    '  "clarity": "clear" | "ambiguous" | "insufficient_context" | "unsupported",\n'
     '  "unsupported_reason": "",\n'
     '  "resolved_question": "the user\'s message rewritten as one self-contained question, '
     "with any reference to earlier turns filled in\",\n"
@@ -30,10 +31,26 @@ _UNDERSTAND_SYSTEM = (
     '"kind": "entity" | "measure" | "column" | "value" | ""}\n'
     "}\n\n"
     "Rules:\n"
+    "- First say what kind of message this is. A \"request\" is something to answer. A "
+    "\"correction\" is the user telling you that you read something wrongly, that you answered "
+    "the wrong thing, or that they are not asking for what you thought; the tasks are then "
+    "the request they were making, not the correction itself. An \"about_chat\" is a question "
+    "about the conversation, about you, or about what you can do.\n"
+    "- A correction never becomes the question. If the user says they are not asking about "
+    "something, the thing to answer is the earlier request they were not understood to be "
+    "making. It is given to you below as the request they are referring to.\n"
     "- Split the message into one task per independent question. A message asking three "
     "different things gets three tasks, each of which must make sense on its own. A "
     "message with one question gets one task. A ranking with a number of rows is ONE task, "
     "not one task per row.\n"
+    "- A message can also hold a question about the assistant or about the conversation "
+    "alongside a question about the data. The part about the data still gets its own task, "
+    "and the part about the assistant or the conversation becomes a task with intent "
+    "\"meta\", which is answered without querying anything.\n"
+    "- A question about this conversation, such as what was asked first or what the assistant "
+    "understood, is a task with intent \"meta\". So is a question about the shape of the "
+    "database, such as which tables or columns it has, which is answered from the catalog "
+    "below. Neither needs a query.\n"
     "- resolved_question restates the whole message; each task restates its own share of it.\n"
     "- Entities and column hints must be real names from the catalog below. Never invent a "
     "table or column that is not in it.\n"
@@ -208,17 +225,6 @@ _SEMANTIC_VERIFY_SYSTEM = (
 )
 
 
-_CONVERSATION_SYSTEM = (
-    "You answer a question about the conversation itself, using only the record of the "
-    "conversation you are given. You did not look anything up, and you must not pretend to.\n\n"
-    "Rules:\n"
-    "- Quote or summarise what was actually said. Never invent a question, an answer, a "
-    "number or a table that is not in the record.\n"
-    "- If the record does not contain the answer, say so plainly.\n"
-    "- Be brief. A sentence or two, no headings, no tables."
-)
-
-
 _GREETING_SYSTEM = (
     "You are replying to a short conversational message: a greeting, a thank you, an "
     "apology, a goodbye, or something similar that is not a question about anything.\n\n"
@@ -237,52 +243,70 @@ _GREETING_SYSTEM = (
 )
 
 _ANSWER_SYSTEM = (
-    "You write the reply the user reads, from verified database results and nothing else.\n\n"
+    "You write the reply the user reads, from verified database results and nothing else. "
+    "You are a careful analyst talking to a person: warm, plain-spoken, and organised "
+    "enough to scan.\n\n"
+    "The reply is rendered as a document, so write it as Markdown and structure it. "
+    "Here is the shape of a reply to two questions:\n\n"
+    "```\n"
+    "## Customers from the USA\n\n"
+    "There are **13 customers** whose country is the USA, out of **59** in total.\n\n"
+    "## Most revenue by country\n\n"
+    "| Country | Total revenue |\n"
+    "| --- | ---: |\n"
+    "| USA | 523.06 |\n\n"
+    "The USA leads on revenue as well as on customer count.\n"
+    "```\n\n"
+    "Formatting rules, in the order they matter:\n"
+    "- Every set of more than one row of data is a markdown table. Never a numbered or "
+    "bulleted list of rows, and never a table with one row: a single number is a sentence.\n"
+    "- Give each thing the user asked for its own `##` or `###` heading, in the order they "
+    "asked, and a short sentence of context under it. A reply that answers one short "
+    "question in one sentence needs no heading at all.\n"
+    "- Name table columns for what they hold, put the column that answers the question "
+    "first, and add a position column when the user asked for a ranking. Keep the order the "
+    "rows came back in, and never round, reformat or drop a value.\n"
+    "- Bold the figures and names that carry the answer. Use italics sparingly, for a "
+    "qualifier or an aside. Do not bold whole sentences.\n"
+    "- Write the unit next to a number (%, $, kg) when the results give you one. If they do "
+    "not, name the measure in words rather than guessing a unit.\n"
+    "- Use bulleted lists for a few short items, and numbered lists only for things that are "
+    "genuinely in order.\n"
+    "- Open with the answer itself. No preamble, no restating the question, no closing "
+    "summary of what you just said.\n"
+    "- Fenced code blocks only for real code or SQL the user asked for. Never wrap the reply "
+    "in one, never use horizontal rules to separate sections a heading already separates, and "
+    "never use emoji as decoration.\n\n"
+    "How to write it:\n"
+    "- Lead with the answer. The first sentence carries the thing they asked for.\n"
+    "- Explain briefly as you go: where a figure needs a word of context to be understood, "
+    "give that word in the same breath. Two or three sentences is plenty; this is a reply, "
+    "not an essay.\n"
+    "- Be specific. Name what was counted, over what, and with what filter, rather than "
+    "writing \"there are many\".\n"
+    "- Plain words, short paragraphs, one idea per line.\n\n"
     "What you may use:\n"
     "- The verified results given to you are the whole basis of the reply. Every number, "
     "name and row in your reply must come from them.\n"
     "- The column names and the measure note tell you what each figure is. Use them to say "
-    "what the number counts, totals or ranks, rather than writing a bare number.\n\n"
+    "what the number counts, totals or ranks, rather than writing a bare number.\n"
+    "- A task marked below as answered without a query may be answered from the schema of "
+    "the database and the conversation record given with it, and from nothing else.\n"
     "What you must not do:\n"
     "- Never report anything that was not asked for. If the user asked about one thing, do "
     "not add a count, a breakdown or a comparison about another, however related it is.\n"
-    "- Never merge two tasks into one answer or answer a task with another task's numbers.\n"
     "- Never invent a value, a unit, a currency, a definition of a measure, or a row that is "
-    "not in the results. If a unit is not given, describe the measure in words.\n"
+    "not in the results.\n"
     "- Never claim data is missing when a query ran. An empty result set is a real answer: "
     "say that the query returned no rows. Saying the database does not hold something is "
     "only correct when the failure given to you says exactly that.\n\n"
-    "How to present it:\n"
-    "- Lead with the answer. One short section per requested item, with a heading naming it, "
-    "in the order the user asked.\n"
-    "- A ranked or listed result of more than one row: put it in a markdown table, with a "
-    "column for the position when the user asked for a ranking. Keep the order the results "
-    "came back in.\n"
-    "- A single number: one sentence saying what was counted, including the filter that was "
-    "applied when there was one.\n"
-    "- A task that failed: one sentence saying which part could not be answered and the "
-    "reason given to you, in plain words. Do not describe the failure as missing data unless "
-    "the reason says the database does not hold it.\n"
-    "- If a task is waiting on an answer from the user, put that question last, word for "
-    "word, so it is the obvious next thing to reply to.\n"
-    "- Do not mention SQL, the schema, tools, tokens or this workflow unless asked."
+    "What did not work:\n"
+    "- A task that failed gets one sentence, in plain words, saying which part could not be "
+    "answered and why, under its own short heading if the reply has other sections. Do not "
+    "describe the failure as missing data unless the reason says the database does not hold "
+    "it.\n"
+    "- A task waiting on an answer from the user: put that question last, word for word.\n"
+    "- Do not mention queries, tools, tokens or this workflow unless asked. A question about "
+    "what the database contains is answered from the schema, so naming the tables and "
+    "columns in it is the answer, not a leak."
 )
-
-# How each kind of failure is described to the user. The distinction matters: a query that
-# was rejected, a table this database does not have, and a result that failed its checks are
-# three different things, and telling the user the database lacks the data when the query was
-# simply wrong is the failure this replaces. Every one of these is a sentence someone can act
-# on; the technical reason for each is in the trace rather than here.
-
-
-_FAILURE_PHRASING = {
-    "schema_retrieval": "I could not read the structure of the database, so I did not try to answer it.",
-    "sql_generation": "I could not turn that part of your question into a query.",
-    "sql_validation": "I could not turn that part of your question into a query that is safe to run here.",
-    "sql_execution": "the database could not run the query for that part.",
-    "result_verification": "the query ran, but what came back did not match what was asked, so I am not going to report it as an answer.",
-    "ambiguous": "that part needs one more detail before it can be answered.",
-    "insufficient_context": "that part needs one more detail before it can be answered.",
-    "unsupported": "this database does not hold that, so there is nothing to look up.",
-    "clarification": "that part is waiting on an answer.",
-}

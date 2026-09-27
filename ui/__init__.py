@@ -3,11 +3,8 @@
 from ui.render import (
     as_frame,
     bubble,
-    inline,
-    is_table_separator,
+    markdown_to_html,
     pipeline_html,
-    render_table,
-    split_table_row,
     text_to_html,
     thinking,
 )
@@ -15,11 +12,8 @@ from ui.render import (
 __all__ = [
     "as_frame",
     "bubble",
-    "inline",
-    "is_table_separator",
+    "markdown_to_html",
     "pipeline_html",
-    "render_table",
-    "split_table_row",
     "text_to_html",
     "thinking",
 ]

@@ -4,9 +4,9 @@ import json
 import re
 from typing import Any, Optional
 
-from agent import llm, router, schema as schema_store
+from agent import llm, schema as schema_store
 from agent.nodes.common import _current_task, _is_meta, _trace, _usage
-from agent.nodes.prompts import _ANSWER_SYSTEM, _CONVERSATION_SYSTEM, _FAILURE_PHRASING
+from agent.nodes.prompts import _ANSWER_SYSTEM
 from agent.state import GraphState, TaskState, TokenUsage, Understanding
 
 
@@ -72,81 +72,39 @@ def _marker_present(marker: str, text: str) -> bool:
     return marker in text
 
 
+def _cell(value) -> str:
+    """A value as a table cell: a pipe in the data would otherwise split the row."""
+    return "" if value is None else str(value).replace("|", "\\|")
+
+
 def _format_result(task: TaskState) -> str:
-    """A readable rendering of one verified result, built only from what was verified."""
+    """A readable rendering of one verified result, built only from what was verified.
+
+    Markdown, like the replies it is appended to, so it is styled the same way. This is the
+    safety net for a reply that left a verified result out, not the normal path.
+    """
     heading = task.question or task.raw
     if task.row_count == 1 and task.rows:
         value = task.rows[0][0]
-        line = f"**{heading}**\n\n{value}"
+        line = f"### {heading}\n\n**{value}**"
         if len(task.rows[0]) > 1:
             line += " (" + ", ".join(
                 f"{column}: {cell}" for column, cell in zip(task.columns, task.rows[0]) if column
             ) + ")"
         return line
-    lines = [f"**{heading}**", ""]
+    lines = [f"### {heading}", ""]
     if task.row_count == 0:
         lines.append("The query ran and returned no rows.")
         return "\n".join(lines)
     lines.append("| " + " | ".join(task.columns) + " |")
     lines.append("| " + " | ".join("---" for _ in task.columns) + " |")
     for row in task.rows:
-        lines.append("| " + " | ".join("" if cell is None else str(cell) for cell in row) + " |")
+        lines.append("| " + " | ".join(_cell(cell) for cell in row) + " |")
     return "\n".join(lines)
 
 
-def node_conversation_answer(state: GraphState) -> dict:
-    """Answer a question about this chat, or about the assistant, from what is known.
-
-    The questions with a definite answer are answered from the record in code, which is both
-    exact and free. Anything else is put to the model with the same record, so it can only
-    say what was said. Neither path can produce a query: nothing here reaches the database.
-    """
-    session = state["session"]
-    model = state["model"]
-    usage = state.get("usage") or TokenUsage()
-    question = state["question"]
-    route = state.get("route")
-
-    answered = _answer_from_record(question, session, route)
-    if answered is not None:
-        return {
-            "answer": answered,
-            "answer_kind": route or "conversation",
-            "usage": usage,
-            "trace": _trace(state, "conversation", "answered from the chat record",
-                            detail="no data was looked up"),
-        }
-
-    record = _conversation_record(session)
-    if not record:
-        text = (
-            "This is the first thing in our chat, so there is no earlier question or answer "
-            "to look back at."
-        )
-        return {
-            "answer": text,
-            "answer_kind": "conversation",
-            "usage": usage,
-            "trace": _trace(state, "conversation", "nothing to look back at"),
-        }
-
-    text, spent = llm.chat_text(
-        llm.grounding_model(model),
-        _CONVERSATION_SYSTEM,
-        f"Question about the conversation: {question}\n\nThe conversation so far:\n{record}",
-        max_completion_tokens=400,
-    )
-    usage.add(spent)
-    return {
-        "answer": text,
-        "answer_kind": route or "conversation",
-        "usage": usage,
-        "trace": _trace(state, "conversation", "answered from the chat record",
-                        detail="no data was looked up"),
-    }
-
-
 def _conversation_record(session) -> str:
+    """What has been asked and answered in this chat, as material rather than as a reply."""
     if not session.turns:
         return ""
     lines = []
@@ -156,97 +114,35 @@ def _conversation_record(session) -> str:
         for task in turn.tasks:
             outcome = task.get("answer_summary") or "not answered"
             lines.append(f"  - {task.get('question')}: {outcome}")
+        if turn.tables:
+            lines.append(f"  tables searched for it: {', '.join(turn.tables)}")
         if turn.answer:
             lines.append(f"Answer given: {turn.answer}")
     return "\n".join(lines)
 
 
-def _answer_from_record(question: str, session, route: Optional[str]) -> Optional[str]:
-    """The conversation questions that have one exact answer, answered from the record.
+def _failure_blocks(failed: list[TaskState], pending: list) -> str:
+    """What to write when nothing verified: the tasks, and how each of them failed.
 
-    Only questions whose answer is a fact about the exchange itself, so the answer is decided
-    here rather than estimated. Anything else returns None and is put to the model with the
-    same record.
+    The kind of failure is given as a description of what happened rather than as the raw
+    error, so the reply can explain it without quoting machinery the user did not ask about.
     """
-    text = router.normalize(question)
-    turns = session.turns
-    if not turns:
-        return None
-
-    wants_first = bool(re.search(r"\b(first|earliest|initial|very first)\b", text))
-    wants_last = bool(re.search(r"\b(last|latest|most recent|previous|preceding|just now)\b", text))
-    asks_count = bool(re.search(r"\bhow many\b", text))
-    asks_answer = bool(re.search(r"\b(answer|reply|respond|said|told me)\b", text))
-    asks_question = bool(re.search(r"\b(ask|question|prompt|request)\b", text))
-
-    if asks_count and re.search(r"\b(question|message|turn|ask)s?\b", text):
-        return f"You have asked {len(turns)} question{'s' if len(turns) != 1 else ''} so far."
-
-    if route == "meta":
-        # A question about the assistant is answered from what the chat knows about it,
-        # rather than by listing the questions, which is a different question.
-        return _describe_last_turn(session, question)
-
-    if asks_answer and wants_last:
-        return turns[-1].answer or "I have not answered anything yet."
-    if asks_answer and wants_first:
-        return turns[0].answer or "I have not answered anything yet."
-    if asks_question and wants_first:
-        return f"The first thing you asked was: \"{turns[0].user}\""
-    if asks_question and wants_last:
-        return f"The last thing you asked was: \"{turns[-1].user}\""
-    if wants_first and asks_question:
-        return f"The first thing you asked was: \"{turns[0].user}\""
-    if asks_question:
-        return (
-            "You have asked:\n"
-            + "\n".join(f"{i}. {turn.user}" for i, turn in enumerate(turns, start=1))
+    lines = [
+        "The user asked a question and none of it could be answered from the database. "
+        "Write a short reply saying so, in plain words, one line per part of their question. "
+        "There are no results to report, so there is nothing to tabulate."
+    ]
+    for task in failed:
+        kind = task.failure_kind or "unknown"
+        lines.append(
+            f"- What they asked: {task.question or task.raw}\n"
+            f"  What happened: {kind}. Do not use the word \"kind\" and do not name any "
+            "system, table, query or error. Explain it as something that happened while "
+            "answering."
         )
-
-    if route == "meta":
-        return _describe_last_turn(session)
-    return None
-
-
-def _capabilities() -> str:
-    """What this assistant can be asked about, taken from the database that is connected.
-
-    Read from the schema rather than written here, so it describes whatever is actually
-    there and stays right when the connection points somewhere else.
-    """
-    tables = sorted(schema_store.catalog())
-    if not tables:
-        return "I answer questions about the connected database."
-    listed = ", ".join(tables[:-1]) + f" and {tables[-1]}" if len(tables) > 1 else tables[0]
-    return (
-        f"I answer questions about the connected database, which has {len(tables)} "
-        f"tables: {listed}. I also remember this conversation, so a follow-up continues the "
-        f"question before it."
-    )
-
-
-def _describe_last_turn(session, asked: str = "") -> str:
-    """What the assistant understood, could do, or has looked at, from the chat's own state."""
-    last = session.turns[-1]
-    questions = [task.get("question") for task in last.tasks if task.get("question")]
-    tables = ", ".join(last.tables) if last.tables else "none yet"
-    asks_about_capabilities = bool(
-        re.search(r"\b(can you do|what can you|what do you do|how do i|what are you able|"
-                  r"help|what are you|who are you)\b", asked or "", re.IGNORECASE)
-    )
-    parts = []
-    if asks_about_capabilities:
-        parts.append(_capabilities())
-        parts.append("")
-    parts.append(f'Your last message was: "{last.user}"')
-    parts.append(f"I read that as: {last.question}")
-    if questions:
-        parts.append("I split it into:\n" + "\n".join(f"- {q}" for q in questions))
-    parts.append(f"Tables I have looked at in this chat: {tables}.")
-    if not asks_about_capabilities:
-        parts.append("")
-        parts.append(_capabilities())
-    return "\n".join(parts)
+    for question in pending:
+        lines.append(f"- There is a question to put to them: {question.question}")
+    return "\n".join(lines)
 
 
 def node_answer(state: GraphState) -> dict:
@@ -289,24 +185,30 @@ def node_answer(state: GraphState) -> dict:
                 "usage": usage,
                 "trace": trace,
             }
-        # Nothing verified and nothing to ask. Written here rather than put to a model with no
-        # results to write from, and in the plain words each failure is named by. The
-        # technical reason is in the trace, where it belongs, rather than in the reply.
-        parts = [
-            f"{task.question or task.raw}: "
-            f"{_FAILURE_PHRASING.get(task.failure_kind, 'it could not be answered.')}"
-            for task in failed
-        ]
-        detail = " ".join(parts) if parts else "No part of this could be answered."
+        # Nothing verified and nothing to ask. The reply is still written by the model, from
+        # the tasks and the kind of each failure. It is given the kind and not the technical
+        # reason, so a reply cannot end up quoting an error message; the reason stays in the
+        # trace, where it is readable by whoever is looking after this.
+        detail = _failure_blocks(failed, pending_questions)
+        text, spent = llm.chat_text(
+            model, _ANSWER_SYSTEM, detail, max_completion_tokens=600
+        )
+        usage.add(spent)
+        text = (text or "").strip()
+        if not text:
+            # A reply that says nothing is worse than a plain statement of the fact.
+            text = "\n".join(
+                f"- {task.question or task.raw} could not be answered." for task in failed
+            ) or "That could not be answered."
         return {
-            "answer": detail,
+            "answer": text,
             "answer_kind": "failed",
             "usage": usage,
             "trace": _trace(
                 state,
                 "answer",
                 "nothing verified",
-                detail=detail,
+                detail=text,
                 reasons={t.task_id: t.failure_reason for t in failed},
             ),
         }
@@ -340,16 +242,35 @@ def node_answer(state: GraphState) -> dict:
             f"{task.semantic_ambiguity}"
         )
     for task in broken:
-        # Only the plain description of the failure goes to the reply, so an exception or a
-        # database message cannot be quoted back to the user as if it were an explanation.
+        # Only the kind of failure goes to the reply, so an exception or a database message
+        # cannot be quoted back to the user as if it were an explanation. The reason itself
+        # is in the trace, where it belongs.
         blocks.append(
             f"Task that could not be answered: {task.question or task.raw}. "
-            f"What went wrong: {_FAILURE_PHRASING.get(task.failure_kind, 'it could not be answered.')} "
-            "There is no result for it and you must not supply one, and you must not report "
-            "any figure for it, including a count of zero."
+            f"What happened: {task.failure_kind or 'unknown'}. Explain that in plain words "
+            "as something that went wrong while answering, without naming any system, table, "
+            "query or error. There is no result for it and you must not supply one, and you "
+            "must not report any figure for it, including a count of zero."
         )
     if meta:
-        blocks.append("Tasks that need no database access: " + ", ".join(t.question or t.raw for t in meta))
+        # A task with no query has no rows, so on its own it gives the model nothing to
+        # write from and it fills the gap with whatever seems plausible. What it may answer
+        # these from is the schema of the database and the record of the conversation, so
+        # that is what it is given.
+        blocks.append(
+            "Tasks that were answered without running a query. There is no result for these, "
+            "and you may only answer them from the schema of the database and the "
+            "conversation record given below. If what they ask is in neither, say you do not "
+            "know it."
+        )
+        for task in meta:
+            blocks.append(f"- {task.question or task.raw}")
+        catalog = schema_store.catalog_text()
+        if catalog:
+            blocks.append(f"The schema of the connected database:\n{catalog}")
+        record = _conversation_record(session)
+        if record:
+            blocks.append(f"The conversation so far:\n{record}")
     if understanding.unsupported_reason:
         blocks.append(
             "Part of the request that this database cannot answer: "
@@ -360,8 +281,10 @@ def node_answer(state: GraphState) -> dict:
     if context:
         blocks.append(f"Earlier in this conversation:\n{context}")
 
+    # Enough room for a reply that carries a heading, a table and a sentence of context
+    # for each of several requested items, rather than one that gets cut off mid-table.
     text, spent = llm.chat_text(
-        model, _ANSWER_SYSTEM, "\n\n".join(blocks), max_completion_tokens=1400
+        model, _ANSWER_SYSTEM, "\n\n".join(blocks), max_completion_tokens=2000
     )
     usage.add(spent)
     text = _ensure_every_result_is_reported(text, verified)

@@ -19,15 +19,14 @@ def route_after_understand(state: GraphState) -> str:
 def route_after_route(state: GraphState) -> str:
     """Where a classified message goes next.
 
-    Three routes never touch the schema, a query or the database: a greeting, a question
-    about the conversation, and a question about the assistant itself. They are answered
-    from what the chat already knows.
+    Three routes, and only one of them is a question to be worked out. A greeting is
+    answered as it is. Everything else, including a question about the conversation or about
+    the assistant, goes to the reading of the message, which has the history, the catalog and
+    the message together and can also split a message that holds more than one thing.
     """
     route = state.get("route")
     if route == "greeting":
         return "greeting"
-    if route in {"conversation", "meta"}:
-        return "conversation_answer"
     if state.get("awaiting_reask") or (
         state.get("clarification") is not None
         and not state.get("clarification_resumed")
