@@ -68,7 +68,8 @@ Chinhook Database Chat turns natural-language questions into database-backed ans
 
 ```mermaid
 flowchart TD
-    START([message]) --> route
+    START([message]) --> rewrite
+    rewrite --> route
     route -->|greeting| greeting[end]
     route -->|conversation / meta| conv[conversation_answer] --> END2([end])
     route -->|clarification reply| plan
