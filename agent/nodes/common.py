@@ -89,6 +89,21 @@ def _visible_schema(task: TaskState) -> str:
     return task.schema
 
 
+def _looks_like_a_data_task(
+    question: str, entities: list[str], filters: list[dict], metrics: list[str]
+) -> bool:
+    """Whether a task the understanding step labelled "meta" still looks like real data work.
+
+    Any one of these on its own is enough: a genuine question about the assistant or the
+    conversation has no entity, filter or metric of its own, because there is nothing in the
+    data for those to refer to, and it does not happen to name something the connected
+    database actually holds.
+    """
+    if entities or filters or metrics:
+        return True
+    return bool(schema_store.mentions_table_word(question))
+
+
 def _task_from_spec(spec: dict[str, Any], index: int, raw: str) -> TaskState:
     intent = str(spec.get("intent") or "other").lower().strip()
     if intent not in _INTENT_ROW_KIND:
@@ -110,6 +125,16 @@ def _task_from_spec(spec: dict[str, Any], index: int, raw: str) -> TaskState:
     stated = verification.parse_limit_from_question(question)
     if stated is not None:
         limit = stated
+
+    if intent == "meta" and _looks_like_a_data_task(question, entities, filters, metrics):
+        # The understanding step read this as a question about the assistant or the
+        # conversation, which skips SQL entirely and is trusted to verify itself. A genuine
+        # meta question has none of its own entities, filters or metrics, and does not name
+        # anything the connected database actually holds; this one does, so the reading is
+        # treated as wrong rather than trusted. Without this, a data question mislabelled
+        # this one way came back marked verified with no query ever run, and the answer node
+        # wrote a confident sentence from nothing.
+        intent = "other"
 
     return TaskState(
         task_id=f"T{index + 1}",

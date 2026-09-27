@@ -7,7 +7,14 @@ from agent import llm, router, schema as schema_store
 from agent.nodes.clarify import _hold_clarification
 from agent.nodes.common import _current_task, _fallback_understanding, _is_meta, _task_from_spec, _trace, _usage
 from agent.nodes.prompts import _UNDERSTAND_SYSTEM
-from agent.state import Clarification, GraphState, TaskState, TokenUsage, Understanding
+from agent.state import (
+    Clarification,
+    GraphState,
+    MAX_TASKS_PER_REQUEST,
+    TaskState,
+    TokenUsage,
+    Understanding,
+)
 
 
 def _hold_only_what_the_question_is_about(
@@ -295,7 +302,7 @@ def node_understand(state: GraphState) -> dict:
             _task_from_spec(spec, index, question)
             for index, spec in enumerate(raw_tasks or [])
             if isinstance(spec, dict) and str(spec.get("question") or "").strip()
-        ]
+        ][:MAX_TASKS_PER_REQUEST]
         said = state.get("raw_question") or state["question"]
         # A message asks something when either the user's words or the rewrite of them do.
         # The rewrite is the working text, so a question it made explicit still counts.
@@ -357,7 +364,7 @@ def node_understand(state: GraphState) -> dict:
                     _task_from_spec(spec, index, recovered)
                     for index, spec in enumerate((retry or {}).get("tasks") or [])
                     if isinstance(spec, dict) and str(spec.get("question") or "").strip()
-                ]
+                ][:MAX_TASKS_PER_REQUEST]
                 # Whatever the reading produced, the turn is about the recovered request,
                 # so the bare request is used when nothing usable came back.
                 tasks = retried or [TaskState(
@@ -368,8 +375,12 @@ def node_understand(state: GraphState) -> dict:
                 clarity = str((retry or {}).get("clarity") or "clear").lower().strip()
                 if clarity not in {"clear", "ambiguous", "insufficient_context", "unsupported"}:
                     clarity = "clear"
-                text = ""
-                options = []
+                # Everything read below this point, the clarification and the unsupported
+                # reason included, has to come from this recovered reading rather than the
+                # first one: payload is reassigned here so it does, instead of the lines
+                # below unconditionally pulling the clarification the first, discarded
+                # reading produced for a message that turned out not to be the real request.
+                payload = retry or {}
 
         unsupported_reason = str(payload.get("unsupported_reason") or "").strip()
         if clarity == "unsupported" and tasks:

@@ -21,6 +21,14 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Optional, TypedDict
 import operator
 
+# The most tasks a single message is ever decomposed into. LangGraph's own recursion limit
+# has to be set once, before the graph runs, at a point where the real number of tasks a
+# question will turn into is not known yet, so that limit is sized against this ceiling
+# instead. Enforcing the same ceiling in node_understand is what makes that sizing actually
+# safe rather than merely generous: a limit sized for at most this many tasks stops
+# protecting anything the moment something is allowed to produce more of them.
+MAX_TASKS_PER_REQUEST = 8
+
 Clarity = Literal["clear", "ambiguous", "insufficient_context", "unsupported"]
 TaskStatus = Literal[
     "pending",
@@ -254,7 +262,16 @@ class TaskState:
         }
 
     def reset_for_retry(self) -> None:
-        """Put the task back to the start of the pipeline, keeping what was learned.
+        """Put a task that was paused for a clarification back to the start of the pipeline.
+
+        This is only ever called when a held question has just been answered, never from the
+        ordinary in-turn repair loop, which counts its own attempts and resets its own fields
+        directly in node_repair_or_finish. That distinction matters for what gets cleared
+        here: a task on hold for a question was not a failed attempt, so its attempt count
+        starts fresh rather than carrying over whatever it had used up before it paused, and
+        the question that was just answered is cleared rather than kept, since holding onto
+        it here is what let the same question come back and be asked again after the user had
+        already answered it, with no way out short of starting a new chat.
 
         The question, the entity, the filters and any answer the user already gave stay,
         because those were settled. What goes is the work built on top of them: the query,
@@ -277,6 +294,10 @@ class TaskState:
         self.failure_kind = ""
         self.failure_reason = None
         self.semantic_ambiguity = ""
+        self.pending_ambiguity = ""
+        self.pending_ambiguity_options = []
+        self.repair_hint = ""
+        self.attempts = 0
 
 
 # ---------- understanding ----------

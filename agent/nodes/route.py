@@ -21,16 +21,9 @@ def node_route(state: GraphState) -> dict:
     raw = state.get("raw_question") or question
     model = state["model"]
 
+    # The guard against a wrong "greeting" verdict lives inside router.classify() itself now,
+    # not here, so that it protects every caller of classify() rather than only this one.
     decision = router.classify(question, session, model, raw=raw)
-    if decision.route == "greeting" and "?" in (raw or ""):
-        # A question is not small talk. A rewrite can read as a statement even when the
-        # message the user sent is plainly a question, and nothing asked is being read as
-        # small talk because of how the rewrite was phrased.
-        decision = router.RouteDecision(
-            route="database",
-            reason="the message the user sent is a question, so it is not small talk",
-            usage=decision.usage,
-        )
     usage = _usage(state, decision.usage)
     trace = _trace(
         state,
@@ -40,6 +33,12 @@ def node_route(state: GraphState) -> dict:
     )
 
     if decision.route == "greeting":
+        if decision.reply is None or not decision.reply.resolved:
+            # The user said something like "thanks" or "never mind" instead of answering.
+            # Without this, the question that was open stays open and silently intercepts
+            # whatever the user asks next, tried against options that have nothing to do
+            # with it.
+            session.pending_clarification = None
         return {
             "route": decision.route,
             "route_reason": decision.reason,

@@ -31,6 +31,7 @@ from agent.session import new_chat
 from agent.state import (
     ChatSession,
     GraphState,
+    MAX_TASKS_PER_REQUEST,
     TaskState,
     TokenUsage,
     Turn,
@@ -53,6 +54,36 @@ STAGE_TO_KEY = {
 }
 
 DEFAULT_MAX_ATTEMPTS = 2
+
+# One task, retried until it gives up, visits retrieve, ground, generate, validate, execute,
+# verify and repair once per attempt.
+_STEPS_PER_TASK_ATTEMPT = 7
+# Plus plan and next_task once per task, regardless of how many attempts that task takes.
+_FIXED_STEPS_PER_TASK = 2
+# rewrite, route and understand run once per request, and answer runs once at the end. The
+# rest is headroom, since being generous here costs nothing: a run that behaves normally never
+# comes close to this ceiling, and the ceiling only exists to stop one that does not.
+_FIXED_OVERHEAD = 8
+
+
+def _recursion_limit(max_attempts: int) -> int:
+    """A recursion limit generous enough for the worst case LangGraph could actually reach.
+
+    The old limit was a function of max_attempts alone: 24 + 12 * max_attempts, which sized
+    the budget for one task and gave no more room for a second one. A question that splits
+    into two or more tasks, each retrying even once, could exceed it and lose the entire
+    turn, including whatever tasks inside it had already succeeded.
+
+    LangGraph needs this number before the graph runs, at a point where the real number of
+    tasks a question will become is not known yet: that only comes out of node_understand,
+    partway through the same invocation this limit is set for. Sizing against
+    MAX_TASKS_PER_REQUEST instead of the true count is what makes this correct rather than
+    just a bigger guess: node_understand enforces that same number as a hard cap on how many
+    tasks a single message can ever produce, so this is sized for the worst case that could
+    actually happen, not merely a case unlikely to be exceeded.
+    """
+    per_task = _FIXED_STEPS_PER_TASK + _STEPS_PER_TASK_ATTEMPT * (max_attempts + 1)
+    return _FIXED_OVERHEAD + MAX_TASKS_PER_REQUEST * per_task
 
 
 class Timing:
@@ -267,7 +298,7 @@ def run_turn(
 
     try:
         final = _compiled().invoke(
-            initial, config={"recursion_limit": 24 + 12 * max_attempts}
+            initial, config={"recursion_limit": _recursion_limit(max_attempts)}
         )
     except Exception as exc:  # noqa: BLE001
         message = re.sub(r"\x1b\[[0-9;]*m", "", str(exc))

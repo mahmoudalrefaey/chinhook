@@ -214,6 +214,37 @@ _ROUTE_SYSTEM = (
 )
 
 
+_DATA_VERB = re.compile(
+    r"^\s*(list|show|count|find|get|give|display|name|tell me|how many|how much|what|who|which)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_a_database_question(raw: str, message: str, named_tables: list[str]) -> bool:
+    """Whether a "greeting" verdict from the model is almost certainly wrong.
+
+    Checked against both texts, not only the one the user typed: a rewrite can turn a
+    question with no question mark of its own ("how many customers are there") into one that
+    has one, or the other way around, and either direction should count. Any one of these
+    three signals is enough on its own, since none of them can be true of genuine small talk:
+    small talk is never phrased as a question, never names something the connected database
+    actually holds, and never opens with a word that asks for data.
+
+    This runs on every "greeting" verdict the model returns, not only the ones the model
+    happens to get wrong, but it is cheap: no model call, and it never overrides anything
+    except a route that already looks indefensible on the message's own shape.
+    """
+    for text in (raw, message):
+        text = (text or "").strip()
+        if not text:
+            continue
+        if "?" in text:
+            return True
+        if _DATA_VERB.match(text):
+            return True
+    return bool(named_tables)
+
+
 def _looks_like_a_new_request(message: str, pending: Clarification) -> bool:
     """Whether a message that did not match the options is a different question entirely.
 
@@ -378,6 +409,15 @@ def _ask_model(
     route = str((payload or {}).get("route") or "").strip().lower()
     if route not in ROUTES:
         route = "database"
+    reason = str((payload or {}).get("reason") or "").strip()
+    if route == "greeting" and _looks_like_a_database_question(raw, message, named_tables):
+        # The model called this small talk, but the message itself already rules that out:
+        # it is phrased as a question, it opens with a word that asks for data, or it names
+        # something the connected database actually holds. Small talk is none of those
+        # things, so a "greeting" verdict here is treated as wrong rather than trusted, and
+        # the message goes on to be read properly rather than answered as if it were "hi".
+        route = "database"
+        reason = f"looked like a database question despite the model's greeting verdict ({reason})" if reason else "looked like a database question despite the model's greeting verdict"
     if route in {"conversation", "meta"}:
         # Whether a message is about the chat or about the data is decided where the history,
         # the catalog and the message are all in one place: the reading of the message, which
@@ -387,6 +427,6 @@ def _ask_model(
         route = "database"
     return RouteDecision(
         route=route,  # type: ignore[arg-type]
-        reason=str((payload or {}).get("reason") or "").strip(),
+        reason=reason,
         usage=spent,
     )
