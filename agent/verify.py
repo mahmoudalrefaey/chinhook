@@ -156,11 +156,25 @@ def verify_task(task, execution: dict[str, Any]) -> tuple[str, list[dict[str, An
     else:
         checks.append(_check("cardinality", "unknown", "no row count was specified by the user"))
 
-    # Aggregate shape. A count or a sum has one number in it.
+    # Aggregate shape. A count or a sum without a GROUP BY has exactly one number in it. With
+    # a GROUP BY, "how many tracks are in each genre" is correctly several rows, one per
+    # genre, and the right count of them depends entirely on how much data there is, which
+    # this check has no way to know in advance. Asserting exactly one row for both shapes
+    # used to fail every grouped aggregate that was actually correct, on every attempt, until
+    # the task gave up and reported a real answer as unanswerable.
     aggregate_intent = task.intent in _AGGREGATE_INTENTS or question_expects_count(
         task.question or task.raw
     )
-    if aggregate_intent:
+    if aggregate_intent and has_group_by(task.sql):
+        if row_count == 0:
+            checks.append(
+                _check("aggregate_shape", "fail", "grouped aggregate query returned no rows at all")
+            )
+            return "fail", checks, ""
+        checks.append(
+            _check("aggregate_shape", "pass", f"grouped aggregate returned {row_count} row(s)")
+        )
+    elif aggregate_intent:
         if row_count == 1:
             checks.append(_check("aggregate_shape", "pass", "single aggregate value returned"))
         elif row_count == 0:

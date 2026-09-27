@@ -86,7 +86,7 @@ __all__ = [
     "route_after_ground",
     "route_after_next_task",
     "route_after_repair",
-    "    route_after_retrieve",
+    "route_after_retrieve",
     "route_after_rewrite",
     "route_after_route",
     "route_after_understand",
