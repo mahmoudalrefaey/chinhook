@@ -16,6 +16,18 @@ def route_after_understand(state: GraphState) -> str:
     return "plan"
 
 
+def route_after_rewrite(state: GraphState) -> str:
+    """Where a rewritten message goes next.
+
+    A rewrite that could not settle part of the message stops here and asks, rather than
+    letting the rest of the workflow work from something half-resolved. Everything else
+    carries on to the router, which sees both the message the user sent and the rewrite.
+    """
+    if state.get("clarification") is not None and state.get("clarification_resumed") is not True:
+        return "clarify"
+    return "route"
+
+
 def route_after_route(state: GraphState) -> str:
     """Where a classified message goes next.
 

@@ -213,7 +213,22 @@ def node_answer(state: GraphState) -> dict:
             ),
         }
 
-    blocks = [f"Original request: {state.get('original_question') or state['question']}"]
+    # What the user typed, not the version of it the workflow worked on: this line is what
+    # makes the reply traceable back to the question they asked.
+    blocks = [
+        f"Original request: {state.get('raw_question') or state.get('original_question') or state['question']}"
+    ]
+    if state.get("rewrite"):
+        blocks.append(
+            f"Read as, the same intent made explicit: {state['rewrite']}\n"
+            "Answer the original request. The reading above is only there so you name the "
+            "interpretation you used when it matters."
+        )
+    if state.get("rewrite_conflict"):
+        blocks.append(
+            f"A rewrite of this request was rejected because {state['rewrite_conflict']}, so "
+            "the original wording above is what is being answered."
+        )
     for index, task in enumerate(verified, start=1):
         shape = "single value" if task.row_count <= 1 else f"{task.row_count} row(s)"
         payload: dict[str, Any] = {

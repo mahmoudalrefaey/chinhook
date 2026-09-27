@@ -71,6 +71,10 @@ def print_internal(result):
     print(f"Model Used: {result.get('model')}")
     if result.get("route"):
         print(f"Route: {result['route']}")
+    if result.get("rewrite"):
+        print(f"Rewritten to: {result['rewrite']}")
+    if result.get("rewrite_conflict"):
+        print(f"Rewrite rejected, so the original wording was used: {result['rewrite_conflict']}")
 
     for task in result.get("tasks") or []:
         state = task.get("status")

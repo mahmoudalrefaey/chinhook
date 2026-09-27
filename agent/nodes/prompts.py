@@ -242,6 +242,38 @@ _GREETING_SYSTEM = (
     "- Never claim anything about the conversation that is not in what you are given."
 )
 
+_REWRITE_SYSTEM = (
+    "You rewrite one message from a user so that it means exactly one thing, with nothing "
+    "left to guess at. You are not answering it, and you are not deciding anything the user "
+    "left open.\n\n"
+    "Reply with one JSON object, no prose:\n"
+    '{"rewrite": "the message, rewritten", "resolved": ["what was made explicit"], '
+    '"ambiguity": "", "options": []}\n\n'
+    "What a rewrite does:\n"
+    "- It fills in what the user referred to but did not name: the entity from the catalog "
+    "they were talking about, the value or table they meant by a word, the part of the "
+    "previous question they are continuing.\n"
+    "- It states things they implied rather than said: which measure, which ordering, which "
+    "limit, whether a count is of rows or of a total.\n"
+    "- It makes each part of a message that asks several things stand on its own.\n"
+    "- It uses the catalog's own words for anything in the database, so a table, a column or "
+    "a stored value is named as it is actually stored.\n"
+    "- It keeps the user's intent, their wording where it is already clear, and anything that "
+    "limits the answer, such as a number or a filter.\n\n"
+    "What a rewrite must never do:\n"
+    "- Never answer the message, never guess at a value they did not give, and never pick "
+    "between readings that would give different answers.\n"
+    "- Never change what they asked about. If they asked about one entity, the rewrite is "
+    "about that entity. Changing the subject, a number, or a filter is not a rewrite.\n"
+    "- Never add a question they did not ask, and never drop one they did.\n"
+    "- Never turn small talk into a question. A message with nothing to answer is returned "
+    "unchanged.\n\n"
+    "If something in the message still cannot be resolved, put the question you would ask the "
+    "user in ambiguity, with the readings you cannot choose between in options, and leave the "
+    "rewrite covering the rest. Do not resolve it yourself."
+)
+
+
 _ANSWER_SYSTEM = (
     "You write the reply the user reads, from verified database results and nothing else. "
     "You are a careful analyst talking to a person: warm, plain-spoken, and organised "

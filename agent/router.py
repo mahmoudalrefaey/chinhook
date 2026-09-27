@@ -237,8 +237,15 @@ def classify(
     message: str,
     session,
     model: str,
+    raw: Optional[str] = None,
 ) -> RouteDecision:
-    """Decide where this message goes, using the cheapest test that can decide."""
+    """Decide where this message goes, using the cheapest test that can decide.
+
+    `message` is what the workflow is working on, which is the rewrite where there is one.
+    `raw` is what the user actually typed. The two are matched against an open question by
+    the user's own words, because the options were offered against those.
+    """
+    raw = raw if raw is not None else message
     pending = session.pending_clarification
     if pending is not None and (pending.resolved or not pending.asked):
         # A clarification that was never put to the user, or one already answered, is not
@@ -246,19 +253,19 @@ def classify(
         pending = None
 
     if pending is not None:
-        reply = resolve_clarification_reply(message, pending)
+        reply = resolve_clarification_reply(raw, pending)
         if reply.resolved:
             return RouteDecision(route="clarification", reason=reply.reason, reply=reply)
 
-        if _looks_like_a_new_request(message, pending):
+        if _looks_like_a_new_request(raw, pending):
             # The user asked something else. It is read as a question of its own, with no
             # mention of the open one, and the open one is dropped rather than left to
             # swallow the next message.
-            return _ask_model(message, session, model, None)
+            return _ask_model(message, session, model, None, raw)
 
         # A short reply that named none of the options. Only this goes to the model with
         # the question in front of it, because only this is genuinely a question of intent.
-        decision = _ask_model(message, session, model, pending)
+        decision = _ask_model(message, session, model, pending, raw)
         if decision.route == "clarification":
             return RouteDecision(
                 route="clarification",
@@ -274,7 +281,7 @@ def classify(
     if is_small_talk(message):
         return RouteDecision(route="greeting", reason="small talk with no question in it")
 
-    return _ask_model(message, session, model, None)
+    return _ask_model(message, session, model, None, raw)
 
 
 def _decide_by_shape(message: str, session) -> Optional[RouteDecision]:
@@ -315,7 +322,11 @@ def _schema_hint(message: str) -> str:
 
 
 def _ask_model(
-    message: str, session, model: str, pending: Optional[Clarification]
+    message: str,
+    session,
+    model: str,
+    pending: Optional[Clarification],
+    raw: Optional[str] = None,
 ) -> RouteDecision:
     catalog = ""
     named_tables: list[str] = []
@@ -327,7 +338,19 @@ def _ask_model(
     except Exception:  # noqa: BLE001
         catalog = ""
 
-    parts = [f"Message: {message}"]
+    parts = []
+    if raw is not None and raw.strip() and raw.strip() != message.strip():
+        # Both texts, labelled. The route is decided on what the user said; the rewrite is
+        # there to resolve what they were referring to, never to decide what they wanted.
+        parts.append(f"Message the user sent:\n{raw}")
+        parts.append(
+            "Rewritten to remove ambiguity, same intent:\n"
+            f"{message}\n"
+            "Judge what the user asked for from the message they sent. Use the rewrite only "
+            "to understand what they were referring to."
+        )
+    else:
+        parts.append(f"Message: {message}")
     hint = _schema_hint(message)
     if hint:
         parts.append(hint)

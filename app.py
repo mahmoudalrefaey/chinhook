@@ -190,6 +190,25 @@ def render_detail(result):
                 unsafe_allow_html=True,
             )
 
+        # The rewrite the workflow worked from, and any disagreement between it and what the
+        # user wrote. Folded away, because it is a diagnostic and not the answer.
+        if result.get("rewrite") or result.get("rewrite_conflict"):
+            with st.expander("Rewritten before answering"):
+                if result.get("rewrite"):
+                    st.markdown(
+                        '<div class="panel-label">Read as</div>', unsafe_allow_html=True
+                    )
+                    st.markdown(result["rewrite"])
+                if result.get("rewrite_conflict"):
+                    st.markdown(
+                        '<div class="panel-label">Rejected</div>', unsafe_allow_html=True
+                    )
+                    st.markdown(result["rewrite_conflict"])
+                    st.markdown(
+                        "The wording the user sent was used instead, because the original "
+                        "question is the source of truth when the two disagree."
+                    )
+
         render_trace(result)
 
 

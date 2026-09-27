@@ -41,7 +41,7 @@ def node_clarify(state: GraphState) -> dict:
             f"I could not tell what \"{state['clarification_answer']}\" meant for this."
         )
     clarification.original_question = (
-        state.get("original_question") or state["question"]
+        state.get("original_question") or state.get("raw_question") or state["question"]
     )
     if clarification.scope == "task":
         clarification.task_ids = clarification.task_ids or [
@@ -97,7 +97,9 @@ def _hold_task_for_clarification(
             options=options,
             reason=question,
             scope="task",
-            original_question=state.get("original_question") or state["question"],
+            original_question=state.get("original_question")
+            or state.get("raw_question")
+            or state["question"],
             task_ids=[task.task_id],
             pending_tasks=list(tasks),
         ),

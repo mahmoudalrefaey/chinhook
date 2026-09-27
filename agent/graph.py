@@ -23,6 +23,7 @@ from agent.nodes import (
     STAGE_EXECUTE,
     STAGE_GENERATE,
     STAGE_RETRIEVE,
+    STAGE_REWRITE,
     STAGE_SUMMARISE,
     STAGE_UNDERSTAND,
 )
@@ -43,6 +44,7 @@ from agent.state import (
 # for it: the node already means "plain language in", and the diagram still lights the same
 # four stages in the same order as before.
 STAGE_TO_KEY = {
+    STAGE_REWRITE: "question",
     STAGE_UNDERSTAND: "question",
     STAGE_RETRIEVE: "retrieve",
     STAGE_GENERATE: "generate",
@@ -114,6 +116,7 @@ def build_graph():
     """Assemble the workflow. Deterministic edges, no cycle without a counter."""
     graph = StateGraph(GraphState)
 
+    graph.add_node("rewrite", _timed(STAGE_REWRITE)(nodes.node_rewrite))
     graph.add_node("route", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_route))
     graph.add_node("greeting", _timed(STAGE_SUMMARISE)(nodes.node_greeting))
     graph.add_node("understand", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_understand))
@@ -129,7 +132,12 @@ def build_graph():
     graph.add_node("next_task", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_next_task))
     graph.add_node("answer", _timed(STAGE_SUMMARISE)(nodes.node_answer))
 
-    graph.add_edge(START, "route")
+    graph.add_edge(START, "rewrite")
+    graph.add_conditional_edges(
+        "rewrite",
+        nodes.route_after_rewrite,
+        {"clarify": "clarify", "route": "route"},
+    )
     graph.add_conditional_edges(
         "route",
         nodes.route_after_route,
@@ -239,6 +247,11 @@ def run_turn(
         "session": session,
         "model": model,
         "question": question,
+        # What the user typed, kept beside the working question for the rest of the run. The
+        # rewrite node replaces "question" with the clearer version; this is never replaced.
+        "raw_question": question,
+        "rewrite": "",
+        "rewrite_conflict": "",
         "trace": [],
         "usage": TokenUsage(),
         "max_attempts": max_attempts,
@@ -308,6 +321,8 @@ def _result_from_state(
         # Additive: the interface's existing panels are untouched, these are new.
         "kind": kind,
         "route": state.get("route") or "",
+        "rewrite": state.get("rewrite") or "",
+        "rewrite_conflict": state.get("rewrite_conflict") or "",
         "clarification": _clarification_payload(state),
         "tasks": [task.as_trace() for task in tasks],
         "trace": list(state.get("trace") or []),

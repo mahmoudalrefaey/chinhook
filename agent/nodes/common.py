@@ -12,6 +12,7 @@ from agent.state import Clarification, GraphState, TaskState, TokenUsage, Unders
 # with the same four labels it has always used.
 
 STAGE_UNDERSTAND = "Reading the question"
+STAGE_REWRITE = "Making the question clear"
 STAGE_RETRIEVE = "Finding relevant tables"
 STAGE_GENERATE = "Writing the query"
 STAGE_EXECUTE = "Running it against the database"

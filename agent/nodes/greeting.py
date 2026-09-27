@@ -26,7 +26,8 @@ def node_greeting(state: GraphState) -> dict:
     """
     session = state["session"]
     model = state["model"]
-    message = state.get("question") or ""
+    # The user's own words, not a rewrite of them: the reply follows their language and tone.
+    message = state.get("raw_question") or state["question"] or ""
 
     material = [f"Message: {message}"]
     if session.turns:

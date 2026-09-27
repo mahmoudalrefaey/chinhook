@@ -30,6 +30,7 @@ from agent.nodes.common import (
     STAGE_EXECUTE,
     STAGE_GENERATE,
     STAGE_RETRIEVE,
+    STAGE_REWRITE,
     STAGE_SUMMARISE,
     STAGE_UNDERSTAND,
 )
@@ -39,6 +40,7 @@ from agent.nodes.greeting import node_greeting
 from agent.nodes.ground import node_ground
 from agent.nodes.plan import node_plan
 from agent.nodes.retrieve import node_retrieve
+from agent.nodes.rewrite import node_rewrite
 from agent.nodes.repair import node_next_task, node_repair_or_finish
 from agent.nodes.route import node_route
 from agent.nodes.routing import (
@@ -47,6 +49,7 @@ from agent.nodes.routing import (
     route_after_next_task,
     route_after_repair,
     route_after_retrieve,
+    route_after_rewrite,
     route_after_route,
     route_after_understand,
     route_after_validate,
@@ -61,6 +64,7 @@ __all__ = [
     "STAGE_EXECUTE",
     "STAGE_GENERATE",
     "STAGE_RETRIEVE",
+    "STAGE_REWRITE",
     "STAGE_SUMMARISE",
     "STAGE_UNDERSTAND",
     "node_answer",
@@ -73,6 +77,7 @@ __all__ = [
     "node_plan",
     "node_repair_or_finish",
     "node_retrieve",
+    "node_rewrite",
     "node_route",
     "node_understand",
     "node_validate",
@@ -81,7 +86,8 @@ __all__ = [
     "route_after_ground",
     "route_after_next_task",
     "route_after_repair",
-    "route_after_retrieve",
+    "    route_after_retrieve",
+    "route_after_rewrite",
     "route_after_route",
     "route_after_understand",
     "route_after_validate",

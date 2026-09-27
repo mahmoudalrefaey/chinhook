@@ -409,6 +409,9 @@ class GraphState(TypedDict, total=False):
     session: ChatSession
     model: str
     question: str
+    raw_question: str
+    rewrite: str
+    rewrite_conflict: str
     trace: list[dict[str, Any]]
     usage: TokenUsage
     max_attempts: int

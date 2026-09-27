@@ -230,6 +230,17 @@ def node_understand(state: GraphState) -> dict:
 
     parts = [f"Database catalog:\n{catalog}"]
     previous = session.turns[-1] if session.turns else None
+    said = state.get("raw_question") or question
+    if said.strip() != question.strip():
+        # The workflow is working on a rewrite of what the user sent. Both are given, so the
+        # reading is settled from the user's own words and the rewrite is used only for what
+        # it made explicit.
+        parts.append(
+            f"Message the user sent:\n{said}\n\n"
+            f"Rewritten to remove ambiguity, same intent:\n{question}\n\n"
+            "Read the message the user sent. The rewrite has resolved what they were "
+            "referring to; use it for that, and not to decide what they wanted."
+        )
     if resumed_answer:
         parts.append(
             f"The user asked:\n{question}\n\n"
@@ -239,15 +250,20 @@ def node_understand(state: GraphState) -> dict:
             "assistant was unsure about, and do not ask that question again."
         )
     else:
-        parts.append(f"Current user message:\n{question}")
-    if previous is not None:
+        if said.strip() == question.strip():
+            parts.append(f"Current user message:\n{question}")
+    if previous is not None and not resumed_answer:
         parts.append(
             "The request the user may be referring to, if this message is about the previous "
             "exchange rather than a new one:\n"
             f"  they asked: {previous.user}\n"
             f"  it was understood as: {previous.question}"
         )
-    if context:
+    if context and not resumed_answer:
+        # A reply to a question the assistant asked already carries the original request
+        # and the answer, so the earlier turns are not repeated: the same exchange said
+        # three times over is both longer and, on a hosted deployment, a prompt that can
+        # trip a content filter for no gain.
         parts.append(f"Conversation so far in this chat:\n{context}")
     if last_clarification and not resumed_answer:
         parts.append(f"A question was asked earlier that has not been answered: {last_clarification}")
@@ -280,20 +296,31 @@ def node_understand(state: GraphState) -> dict:
             for index, spec in enumerate(raw_tasks or [])
             if isinstance(spec, dict) and str(spec.get("question") or "").strip()
         ]
-        if not tasks and clarity in {"clear", "ambiguous", "insufficient_context"}:
+        said = state.get("raw_question") or state["question"]
+        # A message asks something when either the user's words or the rewrite of them do.
+        # The rewrite is the working text, so a question it made explicit still counts.
+        asks_something = "?" in (state["question"] or "") or "?" in (said or "")
+        if not tasks and clarity in {"clear", "ambiguous", "insufficient_context"} and asks_something:
             # The model said the message was answerable but produced no task for it. Treat
-            # the message itself as the task rather than answering nothing.
+            # the message itself as the task rather than answering nothing. Only for a
+            # message that asks something: a message that asks nothing is not a question
+            # that got lost, it is a statement about the exchange, and turning it into a
+            # query is how "I am not asking a question about history" ends up counting
+            # something.
             tasks = [TaskState(task_id="T1", raw=question, question=question, intent="other")]
 
-        # A message that asks nothing, or a set of tasks about something the user has not
-        # raised in this message or the one before it, is not something to run. Either way it
-        # is what a message saying "that is not what I asked" looks like from here, so the
-        # earlier request is read again as the subject rather than an invented one being run.
-        asks_nothing = "?" not in (state["question"] or "")
+        # A message that asks nothing, or a set of tasks about something neither the user nor
+        # the rewrite raised, is not something to run. Either way it is what a message
+        # saying "that is not what I asked" looks like from here, so the earlier request is
+        # read again as the subject rather than an invented one being run. A task is grounded
+        # in what the user said or in the rewrite of it, since the rewrite carries their
+        # intent forward; the guard is here to catch a subject that appears in neither.
         ungrounded = bool(tasks) and not _grounded_in_the_conversation(
-            tasks, state["question"], previous
+            tasks, f"{said} {state['question']}", previous
         )
-        gave_nothing = asks_nothing and clarity in {"insufficient_context", "ambiguous"}
+        gave_nothing = (not asks_something) and (
+            clarity in {"insufficient_context", "ambiguous"} or not tasks
+        )
         if previous is not None and (kind == "correction" or ungrounded or gave_nothing):
             recovered_turn = _last_answered_request(session)
             if recovered_turn is not None:
@@ -302,7 +329,7 @@ def node_understand(state: GraphState) -> dict:
                     {
                         "node": "understand",
                         "event": "correction",
-                        "detail": f"the tasks were not in what the user said: {state['question']}",
+                        "detail": f"the tasks were not in what the user said: {said}",
                         "recovering": recovered,
                     }
                 ]
@@ -312,7 +339,7 @@ def node_understand(state: GraphState) -> dict:
                     "\n\n".join(
                         parts
                         + [
-                            f"The user sent this message:\n{state['question']}\n\n"
+                            f"The user sent this message:\n{said}\n\n"
                             "It is not a question of its own. It is the user telling you that "
                             "what you produced from the message before is not what they asked "
                             "for. The request to answer is the one they were making:\n"

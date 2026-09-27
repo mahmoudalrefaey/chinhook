@@ -16,9 +16,21 @@ def node_route(state: GraphState) -> dict:
     """
     session = state["session"]
     question = state["question"]
+    # What the user typed, beside the message the workflow is working on. The router places
+    # the message on the user's own words; the rewrite only explains what they referred to.
+    raw = state.get("raw_question") or question
     model = state["model"]
 
-    decision = router.classify(question, session, model)
+    decision = router.classify(question, session, model, raw=raw)
+    if decision.route == "greeting" and "?" in (raw or ""):
+        # A question is not small talk. A rewrite can read as a statement even when the
+        # message the user sent is plainly a question, and nothing asked is being read as
+        # small talk because of how the rewrite was phrased.
+        decision = router.RouteDecision(
+            route="database",
+            reason="the message the user sent is a question, so it is not small talk",
+            usage=decision.usage,
+        )
     usage = _usage(state, decision.usage)
     trace = _trace(
         state,
@@ -108,16 +120,20 @@ def _resume_after_clarification(
     if pending is None:  # nothing to resume; treat the message as an ordinary question
         return {"route": "database", "trace": trace, "phase": "routed"}
 
+    # The user's own words are what is recorded and what the question they answered is
+    # recorded against, whichever version of the message the workflow was working on.
+    said = state.get("raw_question") or state["question"]
+
     # The reply is now understood, so the exchange is recorded and the open question is
     # closed. Everything after this point is the original request, not a new one.
-    session.remember_clarification(pending.question, pending.options, state["question"])
+    session.remember_clarification(pending.question, pending.options, said)
     session.pending_clarification = None
 
     trace = trace + [
         {
             "node": "clarify",
             "event": "resolved",
-            "detail": f"answered with: {state['question']}",
+            "detail": f"answered with: {said}",
             "options": list(pending.options),
             "selection": list(reply.selection or []),
         }
@@ -128,18 +144,18 @@ def _resume_after_clarification(
             "route": "database",
             "trace": trace + [{"node": "clarify", "event": "declined",
                                "detail": "the user did not accept the reading on offer"}],
-            "clarification_answer": state["question"],
+            "clarification_answer": said,
             "phase": "routed",
         }
 
-    original = pending.original_question or state["question"]
+    original = pending.original_question or said
     if pending.scope == "task" and pending.pending_tasks:
         tasks = pending.pending_tasks
         affected = set(pending.task_ids)
         for task in tasks:
             if task.task_id in affected:
                 task.reset_for_retry()
-                task.clarification_answer = state["question"]
+                task.clarification_answer = said
         index = next(
             (i for i, task in enumerate(tasks) if task.task_id in affected), 0
         )
@@ -147,7 +163,7 @@ def _resume_after_clarification(
             "route": "followup",
             "route_reason": f"resumed after an answer about {', '.join(sorted(affected))}",
             "original_question": original,
-            "clarification_answer": state["question"],
+            "clarification_answer": said,
             "clarification_resumed": True,
             "tasks": tasks,
             "current_index": index,
@@ -163,7 +179,7 @@ def _resume_after_clarification(
         "route": "followup",
         "route_reason": "re-reading the original request with the answer applied",
         "original_question": original,
-        "clarification_answer": state["question"],
+        "clarification_answer": said,
         "clarification_resumed": True,
         "tasks": [],
         "current_index": 0,

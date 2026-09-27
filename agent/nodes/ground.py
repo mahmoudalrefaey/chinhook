@@ -192,8 +192,10 @@ def node_ground(state: GraphState) -> dict:
             f"{column} holds: "
             f"{', '.join(repr(v) for v in values[:10]) or 'no values'}. Which did you mean?"
         )
+        # The values are offered as options, so the user picks one rather than having to
+        # type a value the interface cannot check for them.
         return _hold_task_for_clarification(
-            state, task, task.pending_ambiguity, [], usage, trace
+            state, task, task.pending_ambiguity, values[:10], usage, trace
         )
 
     if task.needs_grounding and not notes:
