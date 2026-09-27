@@ -4,7 +4,8 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from scripts.generator import ask, get_available_models
+from agent.session import new_chat
+from scripts.generator import ask_detailed, get_available_models
 from scripts.indexer import run_index_check, get_index_status
 import config
 
@@ -20,6 +21,7 @@ def print_welcome():
     print("  - 'status'    : Check index status")
     print("  - 'model'     : Show/switch model (nano/mini)")
     print("  - 'internal'  : Toggle internal process preview")
+    print("  - 'new'       : Start a new chat, forgetting the current one")
     print("  - 'help'      : Show this help message")
     print("  - 'quit'      : Exit the application")
     print("-" * 60)
@@ -39,6 +41,7 @@ def print_help():
     print("  - status    : Show index status (DB vs Qdrant)")
     print("  - model     : Show current model or 'model nano|mini' to switch")
     print("  - internal  : Toggle internal process preview (on/off)")
+    print("  - new       : Start a new chat (forgets the current conversation)")
     print("  - help      : Show this help")
     print("  - quit      : Exit")
 
@@ -53,6 +56,44 @@ def check_environment():
         print("\nPlease set these in your .env file or environment.")
         return False
     return True
+
+
+def print_internal(result):
+    """Show what happened inside the workflow for this question.
+
+    Reads the run that just happened rather than repeating work to display it. The schema
+    shown is the schema that task actually used, the tasks are the ones that were produced,
+    and the token counts are the ones the run already recorded.
+    """
+    print("\n" + "=" * 60)
+    print("Internal Process Preview:")
+    print("=" * 60)
+    print(f"Model Used: {result.get('model')}")
+    if result.get("route"):
+        print(f"Route: {result['route']}")
+
+    for task in result.get("tasks") or []:
+        state = task.get("status")
+        tables = ", ".join(task.get("schema_tables") or []) or "none"
+        reuse = " (reused from this chat)" if task.get("schema_from_cache") else ""
+        print(f"\n  {task.get('task_id')} [{state}, verification: {task.get('verification')}] "
+              f"attempt {task.get('attempts', 0) + 1}: {task.get('question')}")
+        print(f"    Tables: {tables}{reuse}")
+        if task.get("semantic"):
+            print(f"    Grounding: {task['semantic']}")
+        if task.get("sql"):
+            print(f"    SQL: {task['sql']}")
+        print(f"    Rows returned: {task.get('row_count', 0)}")
+        if task.get("failure_kind"):
+            print(f"    Failed because: {task.get('failure_kind')}: {task['failure_reason']}")
+
+    usage = result.get("usage") or {}
+    print("\n" + "-" * 60)
+    print(
+        f"Tokens: {usage.get('input_tokens', 0)} in, {usage.get('output_tokens', 0)} out, "
+        f"{usage.get('total_tokens', 0)} total across {usage.get('llm_calls', 0)} model call(s)"
+    )
+    print("=" * 60)
 
 
 def run_cli():
@@ -74,6 +115,10 @@ def run_cli():
     current_model = config.DEFAULT_MODEL
     show_internal = True
 
+    # The conversation lives here and only here. Starting a new chat replaces this object
+    # with an empty one, which is the only way context leaves the program.
+    chat = new_chat()
+
     while True:
         try:
             user_query = input("\nYou: ").strip()
@@ -89,6 +134,11 @@ def run_cli():
 
             if cmd == 'help':
                 print_help()
+                continue
+
+            if cmd == 'new':
+                chat = new_chat()
+                print("New chat. The previous conversation is forgotten.")
                 continue
 
             if cmd == 'index':
@@ -124,7 +174,7 @@ def run_cli():
                     model = parts[1]
                     if model in get_available_models():
                         current_model = model
-                        print(f"Model switched to: {model}")
+                        print(f"Model switched to: {current_model}")
                     else:
                         print(f"Unknown model: {model}")
                 continue
@@ -151,22 +201,15 @@ def run_cli():
             # Process natural language query
             print("\nProcessing...")
             try:
-                response = ask(user_query, current_model)
+                result = ask_detailed(user_query, current_model, session=chat)
 
                 if show_internal:
-                    print("\n" + "=" * 60)
-                    print("Internal Process Preview:")
-                    print("=" * 60)
-                    from scripts.db_module import get_relevant_schema
-                    schema = get_relevant_schema(user_query)
-                    print(f"Schema Retrieved:\n{schema}")
-                    print(f"Model Used: {current_model}")
-                    print("=" * 60)
+                    print_internal(result)
 
                 print("\n" + "=" * 60)
                 print("Response:")
                 print("=" * 60)
-                print(response)
+                print(result.get("answer") or f"Error: {result.get('error')}")
                 print("=" * 60)
 
             except Exception as e:

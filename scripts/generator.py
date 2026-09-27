@@ -1,107 +1,54 @@
-import os
-import json
-from openai import AzureOpenAI
-from dotenv import load_dotenv
+"""Command line entry point into the query workflow.
 
-from scripts.db_module import (
-    get_relevant_schema,
-    run_sql_query,
-    tools,
-)
+The flow that used to be written out here, retrieving the schema and then asking the model
+to write and run a single query, now runs in the agent package as a LangGraph workflow, and
+this module calls it. The two entry points therefore take exactly the same path: the command
+line gets the same task decomposition, verification and repair the web interface does, and
+there is no second pipeline left to drift out of step.
+
+Retrieval, execution and validation still come from scripts.db_module, and the model clients
+from config, exactly as before.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agent.graph import run_turn
+from agent.session import new_chat
+
+# Re-exported so anything that used to import the database tools from this module still
+# resolves them. The implementations are unchanged and still live in scripts.db_module.
+from scripts.db_module import get_relevant_schema, run_sql_query, tools  # noqa: F401
 
 import config
 
-load_dotenv()
 
+def chat_with_db(question: str, model_name: str = None, session=None) -> str:
+    """Answer one question and return the text.
 
-# ---------- Chat Agent ----------
-def chat_with_db(question: str, model_name: str = None) -> str:
-    """Main chat function with model selection support."""
+    Without a session the question is answered on its own, which is what a single call wants.
+    The command line in main.py passes one session for the life of the chat instead.
+    """
     if model_name is None:
         model_name = config.DEFAULT_MODEL
-
-    schema_context = get_relevant_schema(question)
-
-    messages = [
-        {"role": "system", "content": (
-            "You answer questions using this schema, querying a PostgreSQL database. "
-            "Table and column names are case-sensitive — always wrap them in double "
-            "quotes exactly as given below. Use PostgreSQL syntax only "
-            "(e.g. CURRENT_DATE, NOW(), INTERVAL '7 days') — never SQLite or MySQL "
-            "date functions like date('now', ...). "
-            "When matching user-provided text values (names, titles, etc.) in WHERE "
-            "clauses, use ILIKE instead of = or LIKE so matching is case-insensitive "
-            "— the user may type a value in any case. This case-insensitive rule "
-            "applies only to data values, never to table or column identifiers.\n"
-            f"{schema_context}"
-        )},
-        {"role": "user", "content": question},
-    ]
-
-    client = config.create_azure_client(model_name)
-    deployment = config.get_model_config(model_name)["deployment"]
-
-    resp = client.chat.completions.create(
-        model=deployment,
-        messages=messages,
-        tools=tools,
-        temperature=0,
-    )
-    msg = resp.choices[0].message
-
-    if msg.tool_calls:
-        messages.append(msg)
-        for call in msg.tool_calls:
-            args = json.loads(call.function.arguments)
-            result = run_sql_query(args["query"])
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call.id,
-                "content": str(result)
-            })
-
-        final = client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            temperature=0,
-        )
-        return final.choices[0].message.content
-
-    return msg.content
+    result = run_turn(question, session=session, model=model_name)
+    if result.get("answer"):
+        return result["answer"]
+    return f"Error: {result.get('error')}"
 
 
-def ask(question: str, model_name: str = None) -> str:
+def ask(question: str, model_name: str = None, session=None) -> str:
     """Main entry point for querying the database with natural language."""
-    return chat_with_db(question, model_name)
+    return chat_with_db(question, model_name, session=session)
 
 
-def generate_response(user_query: str, db_context: str, model_name: str = None) -> str:
-    """Generate a response using Azure OpenAI with database context."""
+def ask_detailed(question: str, model_name: str = None, session=None) -> dict:
+    """Same as ask, but with the full result: tasks, trace, timings and token usage."""
     if model_name is None:
         model_name = config.DEFAULT_MODEL
-
-    client = config.create_azure_client(model_name)
-    deployment = config.get_model_config(model_name)["deployment"]
-
-    response = client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": f"You are a helpful assistant. Here is the relevant data from the database to answer user queries: {db_context}",
-            },
-            {
-                "role": "user",
-                "content": user_query,
-            },
-        ],
-        max_completion_tokens=13107,
-        temperature=0.0,
-        top_p=1.0,
-        frequency_penalty=0.0,
-        presence_penalty=0.0,
-        model=deployment,
-    )
-    return response.choices[0].message.content
+    return run_turn(question, session=session, model=model_name)
 
 
 def get_available_models() -> list[str]:
@@ -112,4 +59,4 @@ def get_available_models() -> list[str]:
 if __name__ == "__main__":
     question = input("Ask a question about the database: ")
     model = input(f"Model ({', '.join(get_available_models())}) [gpt-4.1-nano]: ").strip() or "gpt-4.1-nano"
-    print(ask(question, model))
+    print(ask(question, model, session=new_chat()))

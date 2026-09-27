@@ -20,13 +20,24 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from ui.render import (
+    as_frame,
+    bubble,
+    pipeline_html,
+    text_to_html,
+    thinking,
+)
+
+ROOT = Path(__file__).parent
+ICON = ROOT / "assets" / "icon.svg"
+
 st.set_page_config(
     page_title="Chinook Database Chat",
+    page_icon=str(ICON) if ICON.exists() else None,
     layout="wide",
     initial_sidebar_state="auto",
 )
 
-ROOT = Path(__file__).parent
 EXAMPLE_QUESTIONS = [
     "How many customers are from the USA?",
     "What are the top 5 selling tracks?",
@@ -50,52 +61,16 @@ load_styles()
 # handful of patterns actually seen in testing are converted directly. Anything outside
 # those patterns is escaped and shown as plain text rather than guessed at.
 
-def text_to_html(text):
-    escaped = html.escape(text)
-    lines = escaped.split("\n")
-    blocks = []
-    list_items = []
-    list_tag = None
-
-    def flush():
-        nonlocal list_items, list_tag
-        if list_items:
-            blocks.append(f"<{list_tag}>" + "".join(list_items) + f"</{list_tag}>")
-            list_items = []
-            list_tag = None
-
-    for line in lines:
-        stripped = line.strip()
-        # This runs on a growing partial string while an answer is still typing itself out,
-        # not just on finished text. partition never raises even when the separator it is
-        # looking for has not been typed yet, which split(..., 1)[1] does the moment a line
-        # is mid-stream nothing but a bare digit like "1" with no period after it yet.
-        marker, sep, rest = stripped.partition(".")
-        numbered = bool(sep) and marker.isdigit()
-        bulleted = stripped.startswith(("- ", "* "))
-
-        if numbered or bulleted:
-            tag = "ol" if numbered else "ul"
-            if list_tag and list_tag != tag:
-                flush()
-            list_tag = tag
-            content = rest.strip() if numbered else stripped[2:]
-            list_items.append(f"<li>{content}</li>")
-            continue
-
-        flush()
-        if stripped:
-            blocks.append(f"<p>{stripped}</p>")
-
-    flush()
-    joined = "".join(blocks) or f"<p>{escaped}</p>"
-    return joined.replace("**", "<strong>", 1).replace("**", "</strong>", 1) \
-        if joined.count("**") >= 2 else joined
 
 
-def bubble(role, text_html, key_suffix):
-    css_class = "bubble-user" if role == "user" else "bubble-bot"
-    return f'<div class="{css_class}" id="bubble-{key_suffix}">{text_html}</div>'
+
+
+
+
+
+
+
+
 
 
 def stream_bubble(placeholder, text, size=3, pause=0.012):
@@ -124,44 +99,8 @@ except Exception as exc:  # noqa: BLE001
 
 # ---------- pipeline diagram ----------
 
-def pipeline_html(active=None, completed=(), timings=None):
-    """The row of stages, with each one marked pending, running or finished."""
-    timings = timings or {}
-    pieces = []
-    for position, node in enumerate(chat_engine.PIPELINE):
-        key = node["key"]
-        if key == active:
-            state = "active"
-        elif key in completed:
-            state = "done"
-        else:
-            state = "idle"
-
-        seconds = timings.get(key)
-        stamp = f'<div class="node-time">{seconds:.1f}s</div>' if seconds else ""
-        if key == "question" and "question" in completed and not seconds:
-            stamp = '<div class="node-time">in</div>'
-
-        if position:
-            pieces.append(f'<div class="wire {"done" if state != "idle" else ""}"></div>')
-
-        pieces.append(
-            f'<div class="node {state}">'
-            f'<div class="node-dot">{position + 1}</div>'
-            f'<div class="node-title">{node["title"]}</div>'
-            f'<div class="node-detail">{node["detail"]}</div>'
-            f"{stamp}</div>"
-        )
-    return f'<div class="pipeline">{"".join(pieces)}</div>'
 
 
-def thinking(label):
-    return (
-        '<div class="thinking">'
-        '<span class="dots"><span></span><span></span><span></span></span>'
-        f'<span class="thinking-label">{label}</span>'
-        "</div>"
-    )
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -179,16 +118,6 @@ def cached_schema():
     return chat_engine.schema_overview()
 
 
-def as_frame(result):
-    """Result rows as a dataframe, with anything numeric actually typed as numeric."""
-    if not result.get("rows") or not result.get("columns"):
-        return None
-    frame = pd.DataFrame(result["rows"], columns=result["columns"])
-    for column in frame.columns:
-        converted = pd.to_numeric(frame[column], errors="coerce")
-        if converted.notna().all():
-            frame[column] = converted
-    return frame
 
 
 def render_chart(frame):
@@ -214,8 +143,22 @@ def render_detail(result):
         )
 
         if result.get("schema"):
-            st.markdown('<div class="panel-label">Tables retrieved</div>', unsafe_allow_html=True)
-            st.code(result["schema"], language="text")
+            tables = sorted({
+                name
+                for task in result.get("tasks") or []
+                for name in (task.get("schema_tables") or [])
+            })
+            st.markdown(
+                '<div class="panel-label">Tables retrieved: '
+                + html.escape(", ".join(tables) or "none")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+            # The schema of every table that was searched is the longest thing in here and
+            # the least often wanted, so it stays available but out of the way until asked
+            # for. The table names are still shown outside, which is the part anyone reads.
+            with st.expander("Show the schema that was searched"):
+                st.code(result["schema"], language="text")
 
         if result.get("sql"):
             st.markdown('<div class="panel-label">Query written</div>', unsafe_allow_html=True)
@@ -235,8 +178,124 @@ def render_detail(result):
                 unsafe_allow_html=True,
             )
 
+        # Token counts, and the per-task breakdown when a question turned out to be more
+        # than one question. Both sit inside the panel that was already there.
+        usage = result.get("usage")
+        if usage:
+            st.markdown(
+                f'<div class="timing">{usage.get("input_tokens", 0)} input tokens &middot; '
+                f'{usage.get("output_tokens", 0)} output tokens &middot; '
+                f'{usage.get("total_tokens", 0)} total &middot; '
+                f'{usage.get("llm_calls", 0)} model call(s)</div>',
+                unsafe_allow_html=True,
+            )
+
+        render_trace(result)
+
+
+def render_clarification_controls(index, result):
+    """The options of an open question, as controls the user can pick from.
+
+    A question with a finite set of answers is faster to answer with a click than by typing,
+    and a question that says "or" between things that are not mutually exclusive has to be
+    able to take more than one, so the two cases get different controls.
+
+    The choice is put into the same place a typed answer goes, so the request behind the
+    question is resumed rather than the choice being read as a new question of its own.
+    """
+    clarification = result.get("clarification")
+    if not clarification or not clarification.get("options"):
+        return
+    # Answered already: the question is no longer open, so there is nothing to choose.
+    if st.session_state.answered.get(index):
+        return
+
+    options = list(clarification["options"])
+    prefix = f"clarify_{index}"
+    # "both" among the options means the question is genuinely multi-select.
+    multi = len(options) > 2 or any(
+        option.strip().lower() in ("both", "all", "either") for option in options
+    )
+
+    with st.form(prefix + "_form"):
+        chosen = []
+        if multi:
+            st.markdown(
+                '<div class="panel-label">Pick one or more</div>', unsafe_allow_html=True
+            )
+            for position, option in enumerate(options):
+                if st.checkbox(option, key=f"{prefix}_{position}"):
+                    chosen.append(option)
+        else:
+            st.markdown(
+                '<div class="panel-label">Pick one</div>', unsafe_allow_html=True
+            )
+            chosen = [
+                st.radio(
+                    "Pick one",
+                    options,
+                    key=prefix + "_radio",
+                    label_visibility="collapsed",
+                )
+            ]
+        submit = st.form_submit_button("Send", key=f"{prefix}_submit")
+
+    if submit:
+        selection = ", ".join(option for option in chosen if option)
+        st.session_state.answered[index] = True
+        if not selection:
+            return
+        st.session_state.pending = selection
+        st.rerun()
+
+
+def render_trace(result):
+    """The tasks this question became, and how each one went.
+
+    Structured decisions only: what was asked, which tables were used, the SQL, the row
+    count, whether verification passed and why something failed. No model reasoning, and
+    nothing the answer itself does not already say.
+    """
+    tasks = result.get("tasks") or []
+    if not tasks:
+        return
+    with st.expander("Tasks in this question"):
+        for task in tasks:
+            verdict = task.get("verification")
+            badge = {"pass": "ok", "fail": "warn", "unknown": ""}.get(verdict, "")
+            pill = f'<span class="pill pill-{badge}">{verdict}</span>' if badge else ""
+            tables = ", ".join(task.get("schema_tables") or []) or "no tables"
+            reuse = ", reused from earlier in this chat" if task.get("schema_from_cache") else ""
+            st.markdown(
+                f'<div class="stat"><span class="stat-label">{task.get("task_id")} &middot; '
+                f'{task.get("intent")}</span>'
+                f'<span class="stat-value">{task.get("row_count", 0)} rows</span></div>'
+                f'<div class="timing">{html.escape(task.get("question", ""))} &middot; '
+                f'{task.get("status")} {pill}</div>'
+                f'<div class="timing">Tables: {html.escape(tables)}{reuse}</div>',
+                unsafe_allow_html=True,
+            )
+            if task.get("semantic"):
+                st.markdown(
+                    f'<div class="timing">Grounding: {html.escape(task["semantic"])}</div>',
+                    unsafe_allow_html=True,
+                )
+            if task.get("sql"):
+                st.code(task["sql"], language="sql")
+            if task.get("failure_reason"):
+                st.markdown(
+                    f'<div class="timing">Failed: {html.escape(task["failure_reason"])}</div>',
+                    unsafe_allow_html=True,
+                )
+
 
 def render_failure(result):
+    """Say what went wrong in words a person can act on.
+
+    The technical detail is not thrown away, it is put away: an unexpected error message is
+    the kind of thing that is useful to whoever is looking after this and meaningless to
+    whoever asked the question, so it is folded away rather than shown or lost.
+    """
     if result.get("needs_restart"):
         body = (
             "<strong>The database session needs restarting.</strong><br>"
@@ -247,16 +306,36 @@ def render_failure(result):
     else:
         body = (
             "<strong>That question could not be answered.</strong><br>"
-            f"{result.get('error')}"
+            "Something went wrong before there was a result to show. Asking again usually "
+            "works; if it keeps happening, the details are below."
         )
     st.markdown(f'<div class="notice">{body}</div>', unsafe_allow_html=True)
+
+    detail = result.get("error")
+    if detail:
+        with st.expander("Technical detail"):
+            st.code(str(detail), language="text")
 
 
 # ---------- state ----------
 
-for name, default in [("messages", []), ("pending", None), ("comparison", None)]:
+for name, default in [("messages", []), ("pending", None), ("comparison", None),
+                      ("session", None), ("answered", {})]:
     if name not in st.session_state:
         st.session_state[name] = default
+
+
+def chat_session():
+    """The conversation this chat is having.
+
+    Held in session_state next to the messages, so clearing the messages also drops the
+    conversation the agent was reasoning over, and a new chat starts from nothing. It is
+    never a module level or otherwise shared value, so one visitor's chat cannot reach
+    another's.
+    """
+    if st.session_state.session is None:
+        st.session_state.session = chat_engine.new_chat()
+    return st.session_state.session
 
 
 # ---------- sidebar ----------
@@ -323,12 +402,14 @@ with st.sidebar:
         )
         if st.button("Clear messages"):
             st.session_state.messages = []
+            st.session_state.session = None
+            st.session_state.answered = {}
             st.rerun()
 
 
 # ---------- header ----------
 
-banner = ROOT / "banner.png"
+banner = ROOT / "assets/banner.png"
 if banner.exists():
     st.image(str(banner), width="stretch")
 
@@ -373,6 +454,9 @@ with chat_tab:
                 )
                 if message.get("result"):
                     render_detail(message["result"])
+                    # A question with options to choose from is also offered as controls,
+                    # so it can be answered with a click instead of by typing.
+                    render_clarification_controls(index, message["result"])
 
     question = st.chat_input("Ask about customers, tracks, albums, invoices and more")
 
@@ -401,7 +485,7 @@ with chat_tab:
                 finished.append(key)
 
         diagram.markdown(pipeline_html(completed=finished), unsafe_allow_html=True)
-        result = chat_engine.answer(question, model, on_stage=advance)
+        result = chat_engine.answer(question, model, on_stage=advance, session=chat_session())
         diagram.empty()
         slot.empty()
 

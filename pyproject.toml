@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "langgraph>=1.2.12",
     "ollama>=0.6.2",
     "openai>=3.16.2",
     "pandas>=3.0.6",
@@ -13,4 +14,14 @@ dependencies = [
     "qdrant-client>=1.19.1",
     "sqlalchemy>=2.0.54",
     "sqlglot>=30.19.0",
+    # app.py is the web interface and imports this, and the Dockerfile installs the
+    # environment with "uv sync --frozen", so it has to be declared here or the deployed
+    # interface has no Streamlit to run on.
+    "streamlit>=1.40",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+

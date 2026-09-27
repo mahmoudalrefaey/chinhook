@@ -31,8 +31,8 @@ def run_incremental_reindex(changed_tables: list[str]):
 
 def get_index_status() -> dict:
     """Get current index status without modifying anything."""
-    from scripts.db_module import conn
-    db_fp = get_db_fingerprint(conn)
+    from scripts.db_module import get_connection
+    db_fp = get_db_fingerprint(get_connection())
     qdrant_fp = get_qdrant_fingerprint()
     needs_reindex, changed = compare_fingerprints(db_fp, qdrant_fp)
 
