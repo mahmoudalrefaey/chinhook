@@ -3,7 +3,7 @@
 from config import QDRANT_COLLECTION
 from scripts.db.clients import embed, qdrant
 
-SMALL_SCHEMA_THRESHOLD = 25
+SMALL_SCHEMA_THRESHOLD = 10
 
 
 def get_relevant_schema(question: str, top_k=5) -> str:
