@@ -68,30 +68,29 @@ Chinhook Database Chat turns natural-language questions into database-backed ans
 
 ```mermaid
 flowchart TD
-    A([User message]) --> B{Route message}
-    B -->|Greeting / conversation / meta| C[Respond without database query]
-    B -->|Clarification / follow-up / database question| D[Understand request]
-    D --> E{Clear and supported?}
-    E -->|Needs clarification| F[Ask and save clarification]
-    E -->|Ready| G[Split into independent tasks]
-    G --> H[Retrieve relevant schema]
-    H --> I[Ground filter values against live data]
-    I --> J[Generate one SQL query for the task]
-    J --> K[Validate SQL]
-    K -->|Rejected| N[Repair or mark task failed]
-    K -->|Safe SELECT| L[Execute read-only query]
-    L -->|Execution error| N
-    L -->|Executed| M[Verify result]
-    M -->|Mismatch| N
-    M -->|Verified| O{More tasks?}
-    N -->|Retry available| H
-    N -->|Attempts exhausted| O
-    O -->|Yes| H
-    O -->|No| P[Compose answer from verified results]
-    P --> Q[Record compact turn summary]
-    Q --> R([Reply to user])
-    F --> S([Wait for user reply])
-    C --> R
+    START([message]) --> route
+    route -->|greeting| greeting[end]
+    route -->|conversation / meta| conv[conversation_answer] --> END2([end])
+    route -->|clarification reply| plan
+    route -->|understand| understand
+    understand -->|ambiguous| clarify[clarify] --> END3([end])
+    understand -->|unsupported| answer
+    understand --> plan
+    plan --> retrieve
+    retrieve -->|no grounding needed| generate
+    retrieve -->|values to settle| ground
+    ground --> generate
+    generate --> validate
+    validate -->|rejected| repair
+    validate -->|safe| execute
+    execute -->|error| repair
+    execute --> verify
+    verify -->|pass| next_task[next_task]
+    verify -->|fail| repair
+    repair -->|retries left| retrieve
+    repair -->|gave up| next_task
+    next_task -->|more tasks| plan
+    next_task -->|done| answer[answer] --> END4([end])
 ```
 
 ### The task lifecycle
