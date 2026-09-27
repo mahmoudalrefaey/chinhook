@@ -13,7 +13,7 @@ import config
 def print_welcome():
     """Print welcome message and usage instructions."""
     print("=" * 60)
-    print("  Chinook Database Chat - Natural Language Query Interface")
+    print("  Chinhook Database Chat - Natural Language Query Interface")
     print("=" * 60)
     print("\nCommands:")
     print("  - Type your question in natural language")

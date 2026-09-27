@@ -1,4 +1,4 @@
-"""Web interface for asking the Chinook database questions in plain language.
+"""Web interface for asking the Chinhook database questions in plain language.
 
 Run it with the command in README_UI.md. The command line version in main.py still works
 exactly as before, and nothing it depends on is changed by this file.
@@ -32,7 +32,7 @@ ROOT = Path(__file__).parent
 ICON = ROOT / "assets" / "icon.svg"
 
 st.set_page_config(
-    page_title="Chinook Database Chat",
+    page_title="Chinhook Database Chat",
     page_icon=str(ICON) if ICON.exists() else None,
     layout="wide",
     initial_sidebar_state="auto",
@@ -341,7 +341,7 @@ def chat_session():
 # ---------- sidebar ----------
 
 with st.sidebar:
-    st.markdown('<div class="side-brand">Chinook <span>Chat</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="side-brand">Chinhook <span>Chat</span></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="side-heading">Model</div>', unsafe_allow_html=True)
     models = chat_engine.available_models()
@@ -421,7 +421,7 @@ chat_tab, compare_tab, schema_tab = st.tabs(["Chat", "Compare models", "Schema"]
 with chat_tab:
     st.markdown('<div class="page-title">Ask the database a question</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="page-subtitle">Questions are turned into SQL, run against the Chinook '
+        '<div class="page-subtitle">Questions are turned into SQL, run against the Chinhook '
         "database, and answered in plain language. Every answer carries the tables that were "
         "searched and the query that ran.</div>",
         unsafe_allow_html=True,
