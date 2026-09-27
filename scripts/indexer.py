@@ -64,7 +64,7 @@ def get_index_status() -> dict:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Chinhook Indexer")
+    parser = argparse.ArgumentParser(description="Chinook Indexer")
     parser.add_argument("--check", action="store_true", help="Check and index if needed")
     parser.add_argument("--full", action="store_true", help="Force full re-index")
     parser.add_argument("--status", action="store_true", help="Show index status")

@@ -1,4 +1,4 @@
-"""LangGraph agentic workflow for the Chinhook natural-language database chat.
+"""LangGraph agentic workflow for the Chinook natural-language database chat.
 
 The modules here sit on top of the infrastructure that already works in this repository:
 Azure OpenAI through config.create_azure_client, schema retrieval and SQL execution through

@@ -1,6 +1,6 @@
 <div align="center">
 
-# Chinhook Database Chat
+# Chinook Database Chat
 
 ![Our Banner](assets/readme_banner.png)
 
@@ -38,9 +38,9 @@ A database-aware assistant powered by **LangGraph**, **Azure OpenAI**, **Qdrant*
 
 ## At a glance
 
-Chinhook Database Chat turns natural-language questions into database-backed answers. Instead of sending every message directly to a text-to-SQL prompt, it uses a routed, multi-stage workflow designed to make incorrect results easier to detect and contain.
+Chinook Database Chat turns natural-language questions into database-backed answers. Instead of sending every message directly to a text-to-SQL prompt, it uses a routed, multi-stage workflow designed to make incorrect results easier to detect and contain.
 
-**The schema is discovered at runtime.** Table names, columns, types, and table-level evidence are read from the connected database. The application is not tied to the Chinhook table names, although the repository includes Chinhook seed-data references.
+**The schema is discovered at runtime.** Table names, columns, types, and table-level evidence are read from the connected database. The application is not tied to the Chinook table names, although the repository includes Chinook seed-data references.
 
 | Interface | Entry point |
 |---|---|
@@ -306,7 +306,7 @@ uv sync
 
 ### 3. Prepare the database
 
-If you are using the included Chinhook seed data, `data/deploy.py` is the loader referenced by the project. **Review and configure its database connection before running it.** The script is a one-off CSV-to-PostgreSQL loader.
+If you are using the included Chinook seed data, `data/deploy.py` is the loader referenced by the project. **Review and configure its database connection before running it.** The script is a one-off CSV-to-PostgreSQL loader.
 
 ### 4. Start the application
 
@@ -338,8 +338,8 @@ uv run python scripts/indexer.py --full
 ### 6. Run with Docker
 
 ```bash
-docker build -t Chinhook .
-docker run -p 8501:8501 --env-file .env Chinhook
+docker build -t chinhook .
+docker run -p 8501:8501 --env-file .env chinhook
 ```
 
 The container starts the web interface and a co-located Ollama service. PostgreSQL and Qdrant are expected to be reachable separately.
@@ -375,7 +375,7 @@ Additional implementation details:
 ## Project structure
 
 ```text
-Chinhook/
+chinhook/
 ├── app.py                     # Streamlit web interface
 ├── main.py                    # Terminal interface
 ├── chat_engine.py             # Shared workflow entry point

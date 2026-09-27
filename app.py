@@ -67,6 +67,7 @@ try:
     from ui.render import as_frame, bubble, escape_text, pipeline_html, text_to_html, thinking
     import chat_engine
     import config
+    import rate_limit
     from scripts.indexer import get_index_status, run_full_reindex
 except Exception as exc:  # noqa: BLE001
     # escape_text is one of the names this same try was attempting to import, so it cannot
@@ -81,6 +82,46 @@ except Exception as exc:  # noqa: BLE001
         "and that the values in <code>.env</code> are filled in.</div>",
         unsafe_allow_html=True,
     )
+    st.stop()
+
+
+# ---------- access ----------
+
+def _require_passphrase() -> bool:
+    """Gate the whole page behind one shared passphrase, when one is configured.
+
+    Meant for a small evaluation audience on a link that is otherwise public, not a real
+    login system: everyone who has the passphrase shares one identity, and there is no
+    per-user account behind it. Left disabled, the default, when APP_PASSPHRASE is not set,
+    so a deployment that already controls access another way is not forced through a screen
+    it does not need.
+    """
+    import secrets
+
+    if not config.APP_PASSPHRASE:
+        return True
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown('<div class="page-title">Sign in</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">This deployment is protected. Enter the passphrase to '
+        "continue.</div>",
+        unsafe_allow_html=True,
+    )
+    entered = st.text_input("Passphrase", type="password", label_visibility="collapsed")
+    if st.button("Enter", type="primary"):
+        # compare_digest rather than ==, so how long the comparison takes does not itself
+        # leak how many of the passphrase's characters were guessed correctly.
+        if secrets.compare_digest(entered, config.APP_PASSPHRASE):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("That passphrase is not correct.")
+    return False
+
+
+if not _require_passphrase():
     st.stop()
 
 
@@ -327,7 +368,8 @@ def render_failure(result):
 # ---------- state ----------
 
 for name, default in [("messages", []), ("pending", None), ("comparison", None),
-                      ("session", None), ("answered", {})]:
+                      ("session", None), ("answered", {}),
+                      ("rate_bucket", rate_limit.new_session_bucket())]:
     if name not in st.session_state:
         st.session_state[name] = default
 
@@ -472,50 +514,56 @@ with chat_tab:
         st.session_state.pending = None
 
     if question:
-        index = len(st.session_state.messages)
-        st.session_state.messages.append({"role": "user", "content": question})
-        st.markdown(bubble("user", text_to_html(question), index), unsafe_allow_html=True)
-
-        diagram = st.empty()
-        slot = st.empty()
-        answer_slot = st.empty()
-        finished = ["question"]
-
-        def advance(label):
-            key = chat_engine.STAGE_TO_KEY.get(label)
-            diagram.markdown(
-                pipeline_html(active=key, completed=list(finished)),
-                unsafe_allow_html=True,
-            )
-            slot.markdown(thinking(label), unsafe_allow_html=True)
-            if key:
-                finished.append(key)
-
-        diagram.markdown(pipeline_html(completed=finished), unsafe_allow_html=True)
-        result = chat_engine.answer(question, model, on_stage=advance, session=chat_session())
-        diagram.empty()
-        slot.empty()
-
-        if result["ok"] and result.get("answer"):
-            stream_bubble(answer_slot, result["answer"])
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": result["answer"],
-                "result": result,
-            })
+        allowed, notice = rate_limit.check(st.session_state.rate_bucket)
+        if not allowed:
+            # Checked before the question is added to history at all, so a refused question
+            # is not shown as though it were asked and never answered.
+            st.markdown(f'<div class="notice">{escape_text(notice)}</div>', unsafe_allow_html=True)
         else:
-            answer_slot.empty()
-            render_failure(result)
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": "",
-                "failed": True,
-                "result": result,
-            })
+            index = len(st.session_state.messages)
+            st.session_state.messages.append({"role": "user", "content": question})
+            st.markdown(bubble("user", text_to_html(question), index), unsafe_allow_html=True)
 
-        # Redraw everything from stored state so the streamed message and the stored one do
-        # not both survive, which would show the detail panel twice.
-        st.rerun()
+            diagram = st.empty()
+            slot = st.empty()
+            answer_slot = st.empty()
+            finished = ["question"]
+
+            def advance(label):
+                key = chat_engine.STAGE_TO_KEY.get(label)
+                diagram.markdown(
+                    pipeline_html(active=key, completed=list(finished)),
+                    unsafe_allow_html=True,
+                )
+                slot.markdown(thinking(label), unsafe_allow_html=True)
+                if key:
+                    finished.append(key)
+
+            diagram.markdown(pipeline_html(completed=finished), unsafe_allow_html=True)
+            result = chat_engine.answer(question, model, on_stage=advance, session=chat_session())
+            diagram.empty()
+            slot.empty()
+
+            if result["ok"] and result.get("answer"):
+                stream_bubble(answer_slot, result["answer"])
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": result["answer"],
+                    "result": result,
+                })
+            else:
+                answer_slot.empty()
+                render_failure(result)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "",
+                    "failed": True,
+                    "result": result,
+                })
+
+            # Redraw everything from stored state so the streamed message and the stored one
+            # do not both survive, which would show the detail panel twice.
+            st.rerun()
 
 
 # ---------- model comparison ----------
@@ -538,15 +586,19 @@ with compare_tab:
     )
 
     if st.button("Run on both models", type="primary", key="run_compare"):
-        progress = st.empty()
-        outcomes = chat_engine.compare(
-            asked,
-            on_progress=lambda name: progress.markdown(
-                thinking(f"Asking {name}"), unsafe_allow_html=True
-            ),
-        )
-        progress.empty()
-        st.session_state.comparison = {"question": asked, "results": outcomes}
+        allowed, notice = rate_limit.check(st.session_state.rate_bucket)
+        if not allowed:
+            st.markdown(f'<div class="notice">{escape_text(notice)}</div>', unsafe_allow_html=True)
+        else:
+            progress = st.empty()
+            outcomes = chat_engine.compare(
+                asked,
+                on_progress=lambda name: progress.markdown(
+                    thinking(f"Asking {name}"), unsafe_allow_html=True
+                ),
+            )
+            progress.empty()
+            st.session_state.comparison = {"question": asked, "results": outcomes}
 
     comparison = st.session_state.comparison
     if comparison:
