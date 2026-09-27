@@ -381,10 +381,34 @@ def chat_session():
     conversation the agent was reasoning over, and a new chat starts from nothing. It is
     never a module level or otherwise shared value, so one visitor's chat cannot reach
     another's.
+
+    The chat's id lives in the page's own URL, not only in session_state, and every turn is
+    saved under that id (see agent/persistence.py). Session state itself does not survive a
+    restart of the app process, which used to mean a browser tab still open across a restart
+    kept chatting as though nothing had happened, while the agent underneath it had silently
+    forgotten everything said before. Reopening the same URL after a restart now reloads that
+    same conversation's context instead of starting blind. What does not come back is the
+    chat bubbles themselves, which are display state rather than the conversation record the
+    agent reasons from; only that record is what this restores.
     """
     if st.session_state.session is None:
-        st.session_state.session = chat_engine.new_chat()
+        from agent import persistence
+
+        chat_id = st.query_params.get("chat")
+        restored = persistence.load(chat_id) if chat_id else None
+        if restored is not None:
+            st.session_state.session = restored
+        else:
+            st.session_state.session = chat_engine.new_chat()
+            st.query_params["chat"] = st.session_state.session.session_id
     return st.session_state.session
+
+
+def _save_chat_session():
+    from agent import persistence
+
+    if st.session_state.session is not None:
+        persistence.save(st.session_state.session)
 
 
 # ---------- sidebar ----------
@@ -453,6 +477,9 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.session = None
             st.session_state.answered = {}
+            # The old chat's id would otherwise still be sitting in the URL, so the very
+            # next question would load the conversation just cleared right back in.
+            st.query_params.pop("chat", None)
             st.rerun()
 
 
@@ -543,6 +570,9 @@ with chat_tab:
             result = chat_engine.answer(question, model, on_stage=advance, session=chat_session())
             diagram.empty()
             slot.empty()
+            # Saved regardless of whether the turn succeeded: a failed turn, or one still
+            # waiting on a clarification, is exactly the state a restart should not erase.
+            _save_chat_session()
 
             if result["ok"] and result.get("answer"):
                 stream_bubble(answer_slot, result["answer"])
