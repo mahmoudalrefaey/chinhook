@@ -14,12 +14,14 @@ a fresh retrieval, and a fresh retrieval adds to the cache rather than replacing
 from __future__ import annotations
 
 import re
+import time
 from typing import Optional
 
 from agent.state import SchemaCache, split_schema
 
 _catalog_cache: Optional[dict[str, list[tuple[str, str]]]] = None
-_catalog_failed = False
+_catalog_last_failure: float = 0.0
+_CATALOG_RETRY_COOLDOWN_SECONDS = 5.0
 _index_cache: Optional[dict[str, str]] = None
 
 
@@ -27,43 +29,45 @@ def table_names() -> list[str]:
     """Every base table in the database, read from the database itself."""
     from scripts.db_module import get_connection, get_table_names as _get_table_names
 
-    return _get_table_names(get_connection())
+    with get_connection() as conn:
+        return _get_table_names(conn)
 
 
 def catalog() -> dict[str, list[tuple[str, str]]]:
-    """Table name -> [(column, type)], introspected once per process.
+    """Table name -> [(column, type)], introspected and cached for the life of the process.
 
     The query understanding node is given this so it can ground an entity against real
     columns instead of guessing at them. It is cheap, deterministic, and never invented. A
     failed introspection returns an empty catalog rather than failing the turn: the schema a
     task retrieves later still reaches the model, and a blip in a read is not a reason to
     turn away a question.
+
+    A failure is remembered only for a short cooldown, not forever. One outage used to set a
+    flag with no way back, and once it was set every question for the rest of that process
+    was told the database had no tables at all, whether or not the outage had already passed.
     """
-    global _catalog_cache, _catalog_failed
+    global _catalog_cache, _catalog_last_failure
     if _catalog_cache is not None:
         return _catalog_cache
-    if _catalog_failed:
+    if _catalog_last_failure and (time.monotonic() - _catalog_last_failure) < _CATALOG_RETRY_COOLDOWN_SECONDS:
         return {}
 
     from scripts.db_module import get_connection
 
     tables: dict[str, list[tuple[str, str]]] = {}
     try:
-        with get_connection().cursor() as cur:
-            cur.execute(
-                """SELECT table_name, column_name, data_type
-                   FROM information_schema.columns
-                   WHERE table_schema = 'public'
-                   ORDER BY table_name, ordinal_position"""
-            )
-            for table, column, dtype in cur.fetchall():
-                tables.setdefault(table, []).append((column, dtype))
-        try:
-            get_connection().rollback()
-        except Exception:  # noqa: BLE001
-            pass
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT table_name, column_name, data_type
+                       FROM information_schema.columns
+                       WHERE table_schema = 'public'
+                       ORDER BY table_name, ordinal_position"""
+                )
+                for table, column, dtype in cur.fetchall():
+                    tables.setdefault(table, []).append((column, dtype))
     except Exception as exc:  # noqa: BLE001
-        _catalog_failed = True
+        _catalog_last_failure = time.monotonic()
         print(f"Schema catalog unavailable for this request: {type(exc).__name__}: {exc}")
         return {}
     _catalog_cache = tables
@@ -99,7 +103,8 @@ def schema_index() -> dict[str, str]:
         return _index_cache
 
     index: dict[str, str] = {}
-    for table, columns in catalog().items():
+    tables = catalog()
+    for table, columns in tables.items():
         parts = [p for p in re.split(r"[^A-Za-z0-9]+", table) if p]
         for part in parts:
             index.setdefault(part.lower(), table)
@@ -112,7 +117,12 @@ def schema_index() -> dict[str, str]:
                 # to the table the field lives in.
                 index.setdefault(word.lower(), table)
                 index.setdefault(_singular(word.lower()), table)
-    _index_cache = index
+    # An empty index built from a database that genuinely has no tables would be unusual but
+    # real, and caching it would be correct. An empty index built because catalog() just hit
+    # its failure cooldown is not the same thing and must not be locked in: only a catalog
+    # read that actually returned tables gets cached here.
+    if tables:
+        _index_cache = index
     return index
 
 

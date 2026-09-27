@@ -13,8 +13,6 @@ def node_execute(state: GraphState) -> dict:
     if task is None or _is_meta(task):
         return {"phase": "executed"}
 
-    from scripts.db_module import run_sql_query
-
     result = run_sql_query(task.sql)
     if isinstance(result, dict) and "columns" in result:
         rows = result.get("rows") or []

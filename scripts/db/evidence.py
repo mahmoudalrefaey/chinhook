@@ -26,8 +26,9 @@ def get_sample_rows(conn, table_name: str, limit: int = 3) -> list[tuple]:
 def generate_evidence(table_def: str, sample_rows: list[tuple]) -> str:
     """Infer what a table represents in the real world, from its structure and real data.
 
-    Uses the nano deployment since this is a short, well-defined summarisation task, not
-    something that needs the larger model's reasoning.
+    Uses the grounding deployment since this is a short, well-defined summarisation task, not
+    something that needs the larger model's reasoning. It is the same deployment the router
+    and the value-grounding step use, named once in config rather than repeated here.
     """
     sample_text = "\n".join(str(row) for row in sample_rows) or "(table is currently empty)"
     prompt = (
@@ -42,8 +43,8 @@ def generate_evidence(table_def: str, sample_rows: list[tuple]) -> str:
         f"Sample rows:\n{sample_text}"
     )
     try:
-        client = config.create_azure_client("gpt-4.1-nano")
-        deployment = config.get_model_config("gpt-4.1-nano")["deployment"]
+        client = config.create_azure_client(config.GROUNDING_MODEL)
+        deployment = config.get_model_config(config.GROUNDING_MODEL)["deployment"]
         resp = client.chat.completions.create(
             model=deployment,
             messages=[{"role": "user", "content": prompt}],

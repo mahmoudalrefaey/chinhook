@@ -2,7 +2,7 @@
 
 The modules here are the parts of what used to be scripts/db_module.py:
 
-    clients         the shared Postgres connection, the Qdrant client, the embedder
+    clients         the pooled Postgres connections, the Qdrant client, the embedder
     introspection   what tables and columns the database has
     fingerprinting  whether the index still matches the database
     evidence        a plain description of what each table actually represents
@@ -14,7 +14,7 @@ Everything that used to import from scripts.db_module still can: that module is 
 re-export of this package, so callers outside this folder were not touched.
 """
 
-from scripts.db.clients import conn, embed, get_connection, ollama_client, qdrant
+from scripts.db.clients import embed, get_connection, ollama_client, qdrant
 from scripts.db.evidence import generate_evidence, get_sample_rows
 from scripts.db.fingerprinting import (
     compare_fingerprints,
@@ -39,7 +39,6 @@ __all__ = [
     "check_and_index",
     "compare_fingerprints",
     "compute_table_fingerprint",
-    "conn",
     "embed",
     "ensure_collection",
     "full_reindex",

@@ -140,20 +140,23 @@ def schema_overview():
     Nothing is hardcoded. This is the same information the indexer embeds, so it doubles as
     a way to see what the model is given to work with.
     """
+    from psycopg2 import sql
+
     from scripts.db_module import get_connection, get_table_names
 
     tables = []
-    for name in get_table_names(get_connection()):
-        with get_connection().cursor() as cur:
-            cur.execute(
-                """SELECT column_name, data_type
-                   FROM information_schema.columns
-                   WHERE table_schema = 'public' AND table_name = %s
-                   ORDER BY ordinal_position""",
-                (name,),
-            )
-            columns = cur.fetchall()
-            cur.execute(f'SELECT COUNT(*) FROM "{name}"')
-            count = cur.fetchone()[0]
-        tables.append({"table": name, "columns": columns, "rows": count})
+    with get_connection() as conn:
+        for name in get_table_names(conn):
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT column_name, data_type
+                       FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = %s
+                       ORDER BY ordinal_position""",
+                    (name,),
+                )
+                columns = cur.fetchall()
+                cur.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(name)))
+                count = cur.fetchone()[0]
+            tables.append({"table": name, "columns": columns, "rows": count})
     return tables

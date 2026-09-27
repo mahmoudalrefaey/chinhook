@@ -30,11 +30,25 @@ def run_incremental_reindex(changed_tables: list[str]):
 
 
 def get_index_status() -> dict:
-    """Get current index status without modifying anything."""
+    """Get current index status without modifying anything.
+
+    A search index that cannot currently be reached is reported as such rather than treated
+    as an empty one: the two call for different reactions, and conflating them is what used
+    to turn a brief Qdrant hiccup into a full, costly rebuild the moment anyone re-indexed.
+    """
     from scripts.db_module import get_connection
-    db_fp = get_db_fingerprint(get_connection())
-    qdrant_fp = get_qdrant_fingerprint()
-    needs_reindex, changed = compare_fingerprints(db_fp, qdrant_fp)
+
+    with get_connection() as conn:
+        db_fp = get_db_fingerprint(conn)
+
+    try:
+        qdrant_fp = get_qdrant_fingerprint()
+        reachable = True
+    except Exception:  # noqa: BLE001
+        qdrant_fp = {}
+        reachable = False
+
+    needs_reindex, changed = compare_fingerprints(db_fp, qdrant_fp) if reachable else (False, [])
 
     return {
         "db_tables": len(db_fp),
@@ -43,6 +57,7 @@ def get_index_status() -> dict:
         "changed_tables": changed,
         "db_fingerprint": db_fp,
         "qdrant_fingerprint": qdrant_fp,
+        "index_reachable": reachable,
     }
 
 

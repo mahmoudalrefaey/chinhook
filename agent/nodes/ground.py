@@ -46,6 +46,39 @@ def _columns_of(definition: str) -> list[tuple[str, str]]:
     return columns
 
 
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _is_valid_identifier(name: str) -> bool:
+    """Whether a name is safe to interpolate as a bare double-quoted identifier.
+
+    Checked against the name as given, before anything is stripped from it. Stripping a
+    quote out of a bad name first and validating what is left used to let a name containing
+    one silently turn into a different, real table or column instead of being refused.
+    """
+    return bool(_IDENTIFIER.fullmatch(name or ""))
+
+
+def _escape_ilike_value(value: str) -> str:
+    """A value made safe to sit inside a single-quoted ILIKE '%...%' pattern.
+
+    Three characters need escaping, and the order matters: the backslash used as the
+    pattern's own escape character first, so a literal backslash already in the value cannot
+    change how the characters after it are read, then the two characters ILIKE treats as
+    wildcards, and finally the quote that would otherwise end the SQL string literal itself.
+    Without the first two, a value containing "%", "_" or a trailing backslash matched far
+    more or far less than the user actually typed, or broke the query outright.
+
+    This assumes the server's standard_conforming_strings setting is left at its default
+    (on), which is what makes a doubled quote the correct way to escape a quote in a plain
+    string literal. That default is shared by every other place in this codebase that builds
+    a query this way.
+    """
+    value = value.replace("\\", "\\\\")
+    value = value.replace("%", "\\%").replace("_", "\\_")
+    return value.replace("'", "''")
+
+
 def _probe_values(table: str, column: str, value: str) -> list[str]:
     """Stored values that look like the value the user typed.
 
@@ -55,16 +88,12 @@ def _probe_values(table: str, column: str, value: str) -> list[str]:
     """
     from scripts.db_module import run_sql_query
 
-    safe_table = table.replace('"', "")
-    safe_column = column.replace('"', "")
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", safe_table) or not re.fullmatch(
-        r"[A-Za-z_][A-Za-z0-9_]*", safe_column
-    ):
+    if not _is_valid_identifier(table) or not _is_valid_identifier(column):
         return []
-    literal = value.replace("'", "''")
+    literal = _escape_ilike_value(value)
     query = (
-        f'SELECT DISTINCT "{safe_column}" AS v FROM "{safe_table}" '
-        f"WHERE \"{safe_column}\" ILIKE '%{literal}%' LIMIT 200"
+        f'SELECT DISTINCT "{column}" AS v FROM "{table}" '
+        f"WHERE \"{column}\" ILIKE '%{literal}%' ESCAPE '\\' LIMIT 200"
     )
     result = run_sql_query(query)
     if not isinstance(result, dict) or "error" in result:
@@ -378,9 +407,7 @@ def _nearby_values(task: TaskState, hint: str) -> list[tuple[str, str]]:
 def _sample_values(table: str, column: str, limit: int = 12) -> list[str]:
     from scripts.db_module import run_sql_query
 
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table) or not re.fullmatch(
-        r"[A-Za-z_][A-Za-z0-9_]*", column
-    ):
+    if not _is_valid_identifier(table) or not _is_valid_identifier(column):
         return []
     result = run_sql_query(
         f'SELECT DISTINCT "{column}" FROM "{table}" '

@@ -7,38 +7,59 @@ a re-index happens when a table's shape or its contents change, and not otherwis
 import hashlib
 import json
 
+from psycopg2 import sql
+
 from config import QDRANT_COLLECTION
 from scripts.db.clients import qdrant
 from scripts.db.introspection import get_table_names
 
+_LARGE_TABLE_ROWS = 10000
+_SAMPLE_ROWS = 1000
 
-def compute_table_fingerprint(conn, table_name: str) -> dict:
-    """Compute fingerprint for a single table: row count + schema hash."""
+
+def compute_table_fingerprint(conn, table_name: str, schema_name: str = "public") -> dict:
+    """Row count, schema shape and a content checksum for one table.
+
+    The content checksum is computed inside Postgres rather than in Python: the row content
+    is aggregated and hashed server side, with an explicit ORDER BY so the result does not
+    depend on whatever physical order the engine happens to return rows in, and, for a large
+    table, a REPEATABLE seed so the sample is the same sample every time this runs rather than
+    a fresh random one. Without both of those, the fingerprint of a completely unchanged table
+    could differ from one check to the next, which used to trigger a real re-index, model call
+    and all, for no actual change.
+    """
+    table_ident = sql.Identifier(schema_name, table_name)
     with conn.cursor() as cur:
-        # Row count
-        cur.execute(f'SELECT COUNT(*) FROM "{table_name}"')
+        cur.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(table_ident))
         row_count = cur.fetchone()[0]
 
-        # Schema hash (column definitions)
         cur.execute(
-            """ SELECT column_name, data_type, is_nullable, column_default
-             FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = %s
-             ORDER BY ordinal_position """,
-            (table_name,),
+            """SELECT column_name, data_type, is_nullable, column_default
+               FROM information_schema.columns
+               WHERE table_schema = %s AND table_name = %s
+               ORDER BY ordinal_position""",
+            (schema_name, table_name),
         )
         cols = cur.fetchall()
-        schema_str = json.dumps(cols, sort_keys=True)
-        schema_hash = hashlib.sha256(schema_str.encode()).hexdigest()[:16]
+        schema_hash = hashlib.sha256(
+            json.dumps(cols, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
 
-        # Data checksum (sample-based for large tables)
-        if row_count > 10000:
-            cur.execute(f'SELECT * FROM "{table_name}" TABLESAMPLE SYSTEM (10) LIMIT 1000')
+        if row_count > _LARGE_TABLE_ROWS:
+            from_clause = sql.SQL("FROM {} AS t TABLESAMPLE SYSTEM (10) REPEATABLE (42)").format(
+                table_ident
+            )
+            limit_clause = sql.SQL("LIMIT {}").format(sql.Literal(_SAMPLE_ROWS))
         else:
-            cur.execute(f'SELECT * FROM "{table_name}"')
-        rows = cur.fetchall()
-        data_str = json.dumps(rows, sort_keys=True, default=str)
-        data_hash = hashlib.sha256(data_str.encode()).hexdigest()[:16]
+            from_clause = sql.SQL("FROM {} AS t").format(table_ident)
+            limit_clause = sql.SQL("")
+        cur.execute(
+            sql.SQL(
+                "SELECT md5(coalesce(string_agg(row_text, '' ORDER BY row_text), '')) "
+                "FROM (SELECT (t.*)::text AS row_text {} {}) s"
+            ).format(from_clause, limit_clause)
+        )
+        data_hash = cur.fetchone()[0]
 
     return {
         "table_name": table_name,
@@ -49,38 +70,40 @@ def compute_table_fingerprint(conn, table_name: str) -> dict:
 
 
 def get_db_fingerprint(conn) -> dict:
-    """Get fingerprint for all tables in the database."""
+    """Fingerprint for every table in the database, keyed by table name."""
     table_names = get_table_names(conn)
-    fingerprint = {}
-    for table_name in table_names:
-        fingerprint[table_name] = compute_table_fingerprint(conn, table_name)
-    return fingerprint
+    return {name: compute_table_fingerprint(conn, name) for name in table_names}
 
 
 def get_qdrant_fingerprint() -> dict:
-    """Extract stored fingerprint from Qdrant payload."""
+    """The fingerprint stored with each indexed table, read back from Qdrant.
+
+    Returns an empty dict only when the collection genuinely does not exist yet, meaning
+    nothing has ever been indexed. A network problem or any other failure talking to Qdrant
+    is raised rather than swallowed into the same empty result: the two situations call for
+    different responses. "Nothing indexed yet" means build the index. A two-second Qdrant
+    hiccup does not, and treating it as though it did used to turn a brief blip into a full
+    rebuild, complete with a fresh model call for every table.
+    """
+    if not qdrant.collection_exists(QDRANT_COLLECTION):
+        return {}
+
     fingerprint = {}
-    try:
-        # Scroll through all points to get payload metadata
-        offset = None
-        while True:
-            result = qdrant.scroll(
-                collection_name=QDRANT_COLLECTION,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
-            points, offset = result
-            for point in points:
-                payload = point.payload
-                if "fingerprint" in payload:
-                    fp = payload["fingerprint"]
-                    fingerprint[fp["table_name"]] = fp
-            if offset is None:
-                break
-    except Exception:
-        pass
+    offset = None
+    while True:
+        points, offset = qdrant.scroll(
+            collection_name=QDRANT_COLLECTION,
+            limit=100,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for point in points:
+            fp = point.payload.get("fingerprint")
+            if fp:
+                fingerprint[fp["table_name"]] = fp
+        if offset is None:
+            break
     return fingerprint
 
 
