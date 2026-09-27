@@ -4,8 +4,9 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import chat_engine
 from agent.session import new_chat
-from scripts.generator import ask_detailed, get_available_models
+from scripts.generator import get_available_models
 from scripts.indexer import run_index_check, get_index_status
 import config
 
@@ -13,7 +14,7 @@ import config
 def print_welcome():
     """Print welcome message and usage instructions."""
     print("=" * 60)
-    print("  Chinhook Database Chat - Natural Language Query Interface")
+    print("  Chinook Database Chat - Natural Language Query Interface")
     print("=" * 60)
     print("\nCommands:")
     print("  - Type your question in natural language")
@@ -81,7 +82,7 @@ def print_internal(result):
         tables = ", ".join(task.get("schema_tables") or []) or "none"
         reuse = " (reused from this chat)" if task.get("schema_from_cache") else ""
         print(f"\n  {task.get('task_id')} [{state}, verification: {task.get('verification')}] "
-              f"attempt {task.get('attempts', 0) + 1}: {task.get('question')}")
+              f"attempt {(task.get('attempts') or 0) + 1}: {task.get('question')}")
         print(f"    Tables: {tables}{reuse}")
         if task.get("semantic"):
             print(f"    Grounding: {task['semantic']}")
@@ -89,7 +90,7 @@ def print_internal(result):
             print(f"    SQL: {task['sql']}")
         print(f"    Rows returned: {task.get('row_count', 0)}")
         if task.get("failure_kind"):
-            print(f"    Failed because: {task.get('failure_kind')}: {task['failure_reason']}")
+            print(f"    Failed because: {task.get('failure_kind')}: {task.get('failure_reason')}")
 
     usage = result.get("usage") or {}
     print("\n" + "-" * 60)
@@ -173,9 +174,9 @@ def run_cli():
                 continue
 
             if cmd.startswith('model '):
-                parts = cmd.split()
+                parts = user_query.split()
                 if len(parts) > 1:
-                    model = parts[1]
+                    model = parts[1].lower()
                     if model in get_available_models():
                         current_model = model
                         print(f"Model switched to: {current_model}")
@@ -202,23 +203,41 @@ def run_cli():
                         print("Usage: internal on|off")
                 continue
 
-            # Process natural language query
+            # Process natural language query. Routed through chat_engine.answer rather than
+            # calling the workflow directly, which is what the web interface already does:
+            # it is what catches a WorkflowError and sets needs_restart, and calling the
+            # workflow directly here meant that signal, and the clear message it is meant to
+            # produce, never reached anyone using the terminal.
             print("\nProcessing...")
             try:
-                result = ask_detailed(user_query, current_model, session=chat)
-
-                if show_internal:
-                    print_internal(result)
-
-                print("\n" + "=" * 60)
-                print("Response:")
-                print("=" * 60)
-                print(result.get("answer") or f"Error: {result.get('error')}")
-                print("=" * 60)
-
-            except Exception as e:
-                print(f"\nError: {e}")
+                result = chat_engine.answer(user_query, current_model, session=chat)
+            except Exception as e:  # noqa: BLE001
+                # chat_engine.answer already catches everything it knows how to handle, so
+                # reaching here means something outside that. Reported and moved on from
+                # rather than left to end the whole session over one bad turn.
+                print(f"\nUnexpected error: {e}")
                 print("Please try again or type 'help' for assistance.")
+                continue
+
+            if show_internal:
+                print_internal(result)
+
+            print("\n" + "=" * 60)
+            print("Response:")
+            print("=" * 60)
+            if result.get("answer"):
+                print(result["answer"])
+            elif result.get("needs_restart"):
+                print(
+                    "The database session needs restarting. An earlier query left the "
+                    "shared connection in a bad state, so every question after it fails "
+                    "too. Restart this program to clear it."
+                )
+            elif result.get("error"):
+                print(f"Error: {result['error']}")
+            else:
+                print("The assistant did not return an answer. Try asking again.")
+            print("=" * 60)
 
         except KeyboardInterrupt:
             print("\n\nInterrupted. Goodbye!")
