@@ -2,11 +2,10 @@
 
 import re
 
-import sqlglot
 
 from agent import schema as schema_store, verify as verification
-from agent.nodes.common import _current_task, _is_meta, _trace, _usage
-from agent.state import GraphState, TaskState
+from agent.nodes.common import _current_task, _is_meta, _trace
+from agent.state import GraphState
 
 
 _FORBIDDEN = re.compile(

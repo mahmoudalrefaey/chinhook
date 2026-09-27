@@ -1,7 +1,7 @@
 """Running one task's query and keeping the result on that task alone."""
 
-from agent.nodes.common import _current_task, _is_meta, _trace, _usage
-from agent.state import GraphState, TaskState
+from agent.nodes.common import _current_task, _is_meta, _trace
+from agent.state import GraphState
 
 from scripts.db import run_sql_query
 

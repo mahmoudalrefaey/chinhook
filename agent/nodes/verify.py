@@ -1,13 +1,11 @@
 """Checking the result answers the task, which is not the same as having run."""
 
 import json
-import re
-from typing import Any
 
 from agent import llm, verify as verification
-from agent.nodes.common import _current_task, _is_meta, _trace, _usage
+from agent.nodes.common import _current_task, _is_meta, _trace
 from agent.nodes.prompts import _SEMANTIC_VERIFY_SYSTEM
-from agent.state import GraphState, TaskState, TokenUsage
+from agent.state import GraphState, TokenUsage
 
 
 def node_verify(state: GraphState) -> dict:

@@ -4,7 +4,7 @@ import json
 
 from agent import llm, verify as verification
 from agent.nodes.common import BASE_SQL_RULES, _current_task, _is_meta, _trace, _usage, _visible_schema
-from agent.state import GraphState, TaskState
+from agent.state import GraphState
 
 
 # ---------- SQL generation ----------
@@ -20,7 +20,7 @@ def node_generate(state: GraphState) -> dict:
     lines = [
         BASE_SQL_RULES + schema_text,
         "",
-        f"Answer exactly one task with one SELECT statement.",
+        "Answer exactly one task with one SELECT statement.",
         f"Task: {task.question or task.raw}",
         f"Intent: {task.intent}. Result shape expected: {task.expected_row_kind}.",
     ]

@@ -643,7 +643,7 @@ with compare_tab:
             default=0,
         )
 
-        for column, (name, result) in zip(columns, comparison["results"].items()):
+        for column, (name, result) in zip(columns, comparison["results"].items(), strict=True):
             with column:
                 total = result.get("timings", {}).get("total", 0)
                 badge = '<span class="pill pill-ok">fastest</span>' if total == fastest else ""
@@ -697,7 +697,7 @@ with schema_tab:
             ("Columns", f"{sum(len(t['columns']) for t in tables)}"),
             ("Rows", f"{sum(t['rows'] for t in tables):,}"),
         ]
-        for column, (label, value) in zip(totals, figures):
+        for column, (label, value) in zip(totals, figures, strict=True):
             column.markdown(
                 f'<div class="figure"><div class="figure-value">{value}</div>'
                 f'<div class="figure-label">{label}</div></div>',

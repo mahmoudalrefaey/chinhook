@@ -1,8 +1,8 @@
 """Finding the schema for one task, from the cache or from Qdrant."""
 
-from agent.nodes.common import _current_task, _is_meta, _trace, _usage
+from agent.nodes.common import _current_task, _is_meta, _trace
 from agent import schema as schema_store
-from agent.state import GraphState, TaskState
+from agent.state import GraphState
 
 
 # ---------- schema retrieval ----------

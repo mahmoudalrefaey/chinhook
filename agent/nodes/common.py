@@ -4,7 +4,7 @@ shapes a task is built from."""
 from typing import Any, Optional
 
 from agent import schema as schema_store, verify as verification
-from agent.state import Clarification, GraphState, TaskState, TokenUsage, Understanding
+from agent.state import GraphState, TaskState, TokenUsage, Understanding
 
 
 # ---------- stage labels ----------

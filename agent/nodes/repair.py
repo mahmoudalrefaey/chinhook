@@ -1,7 +1,7 @@
 """Bounded repair, and moving on to the next task."""
 
 from agent.nodes.common import _current_task, _next_open_task, _trace
-from agent.state import GraphState, TaskState
+from agent.state import GraphState
 
 
 def node_repair_or_finish(state: GraphState) -> dict:

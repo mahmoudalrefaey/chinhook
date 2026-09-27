@@ -14,7 +14,11 @@
     --surface-alt: #F7F7F6;
     --ink: #1A1A1A;
     --muted: #6B6B6B;
-    --faint: #9A9A9A;
+    /* Was #9A9A9A, which measures 2.81:1 against the white surface behind it, below the
+       4.5:1 WCAG AA calls for at the sizes this is actually used at, on the pipeline
+       diagram every visitor sees before asking anything. Matches --muted below, which
+       already clears it with real margin (5.33:1). */
+    --faint: #6B6B6B;
     --line: #E5E5E5;
     --radius: 14px;
     --radius-sm: 10px;
@@ -299,6 +303,12 @@ h1, h2, h3, h4 {
     font-size: 0.94rem;
     line-height: 1.6;
     animation: riseIn 0.38s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+    /* A table wider than the bubble scrolls the bubble itself rather than trying to manage
+       its own overflow. A long unbroken run of text, such as a URL or an id echoed from a
+       database row, wraps instead of running past the bubble's edge, which nothing here
+       did before for anything except a code block. */
+    overflow-x: auto;
+    overflow-wrap: anywhere;
 }
 
 .bubble-bot p { margin: 0 0 0.5rem 0; }
@@ -371,17 +381,19 @@ h1, h2, h3, h4 {
 
 /* A table is the shape a result of rows takes, so it is given room to breathe: its own
    scroll when it is wider than the bubble, a clear header, and alternating rows so a
-   long list can be followed down the page. */
+   long list can be followed down the page.
+
+   The table itself keeps the browser's ordinary table layout rather than being split into
+   two independent ones for its header and its body: that split used to let each compute its
+   own column widths from its own content, so a header rarely lined up with the data under
+   it. The horizontal scroll that a wide table still needs lives on the bubble as a whole
+   instead, which is the one thing here actually allowed to manage overflow on its own. */
 .bubble-bot table {
     width: 100%;
     border-collapse: collapse;
     margin: 0.7rem 0 0.9rem;
     font-size: 0.9rem;
-    display: block;
-    overflow-x: auto;
 }
-.bubble-bot thead { display: table; width: 100%; table-layout: auto; }
-.bubble-bot tbody { display: table; width: 100%; table-layout: auto; }
 .bubble-bot th, .bubble-bot td {
     text-align: left;
     padding: 0.42rem 0.7rem;
@@ -768,8 +780,12 @@ h1, h2, h3, h4 {
 
 @media (max-width: 640px) {
     .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
-    [class*="st-key-usermsg"] { max-width: 92%; }
-    [class*="st-key-botmsg"] { max-width: 100%; }
+    /* Targets the classes the bubbles actually carry. An earlier version of this rule named
+       keyed-container classes from before the bubbles became plain divs this file writes
+       directly, and matched nothing at all afterwards: phones kept the desktop 76%/88% width
+       from further up this file instead of the narrower one meant for them. */
+    .bubble-user { max-width: 92%; }
+    .bubble-bot { max-width: 100%; }
     .page-title { font-size: 1.3rem; }
     .node-detail { display: none; }
     .node { min-width: 66px; }

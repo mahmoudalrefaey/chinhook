@@ -28,5 +28,24 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "ruff>=0.16.9",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs a reachable Postgres and Qdrant; skipped when they are not",
+    "llm: needs real Azure OpenAI credentials and Ollama, on top of integration's needs",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# A conservative starting set for a codebase with no lint history: real correctness signals
+# (unused imports and names, undefined names, bare except) rather than a style rewrite of
+# every file that has never been linted before.
+select = ["E", "F", "B"]
+ignore = ["E501"]  # line length is a soft preference here, not a build-breaking rule
 

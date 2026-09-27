@@ -1,6 +1,6 @@
 """Putting a question to the user, and keeping hold of it until they answer."""
 
-from agent.nodes.common import _current_task, _is_meta, _trace, _usage
+from agent.nodes.common import _trace
 from agent.state import Clarification, GraphState, TaskState, TokenUsage, Understanding
 
 

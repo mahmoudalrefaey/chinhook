@@ -2,12 +2,12 @@
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 from agent import llm, schema as schema_store
-from agent.nodes.common import _current_task, _is_meta, _trace, _usage
+from agent.nodes.common import _is_meta, _trace
 from agent.nodes.prompts import _ANSWER_SYSTEM
-from agent.state import GraphState, TaskState, TokenUsage, Understanding
+from agent.state import GraphState, TaskState, TokenUsage
 
 
 def _result_marker(task: TaskState) -> str:
@@ -89,7 +89,7 @@ def _format_result(task: TaskState) -> str:
         line = f"### {heading}\n\n**{value}**"
         if len(task.rows[0]) > 1:
             line += " (" + ", ".join(
-                f"{column}: {cell}" for column, cell in zip(task.columns, task.rows[0]) if column
+                f"{column}: {cell}" for column, cell in zip(task.columns, task.rows[0], strict=True) if column
             ) + ")"
         return line
     lines = [f"### {heading}", ""]
