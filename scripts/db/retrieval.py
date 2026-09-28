@@ -19,6 +19,14 @@ from scripts.db.clients import embed, qdrant
 
 DEFAULT_TOP_K = 8
 _MAX_JOIN_HOPS = 3
+# A table only belongs in the core set if it is at least this much of the best-matching
+# table's own score: dense similarity on a real schema drops off a cliff after the table a
+# question is actually about, the way "how many customers" scored the customer table at
+# 0.34 and everything else at 0.20 or below, so a fixed top-k took seven tables nothing
+# needed along with the one that mattered. A ratio against the best match, rather than a
+# fixed count, is what lets one obviously-dominant table stay alone and a genuinely
+# multi-table question still keep every table that is actually close to what it named.
+_CORE_SCORE_RATIO = 0.6
 
 
 def _table_name_from_def(table_def: str) -> str:
@@ -86,6 +94,14 @@ def expand_with_joins(table_names: set[str], graph: Optional[dict[str, set[str]]
     on the graph as it stands independent of which tables happen to have ranked well for this
     particular question, and capped at a handful of hops so two tables that are only related
     by a long, incidental chain do not pull in most of the schema to connect them.
+
+    Deliberately not "add every direct neighbour of every retrieved table" instead: on a
+    schema where most tables sit one join away from several others, that pulls in whatever a
+    core table happens to be connected to regardless of whether the question needs it, which
+    is worse than the fixed top-k this replaced. A table that is genuinely needed only for a
+    join, and never named or closely matched itself, is instead recovered by the repair loop:
+    a query that could not reach it fails validation by naming a table this attempt was never
+    given, and the retry that follows asks for a wider retrieval specifically because of that.
     """
     graph = graph if graph is not None else join_graph()
     names = list(table_names)
@@ -144,6 +160,24 @@ def _content_words(text: str) -> set[str]:
     }
 
 
+def _named_tables(question: str, points: list) -> set[str]:
+    """Tables whose own name is one of the question's words, not just somewhere in its text.
+
+    Used for the core set rather than full table_def overlap: a table's def includes its
+    generated evidence sentence, prose that can easily mention another table in passing (an
+    employee's description naming the customers they support, say), and that is not the same
+    thing as the question actually being about that other table.
+    """
+    asked = _content_words(question)
+    named = set()
+    for point in points:
+        name = _table_name(point)
+        name_words = {_singular(w) for w in re.split(r"[^a-z0-9]+", name.lower()) if w}
+        if name_words & asked:
+            named.add(name)
+    return named
+
+
 def _lexical_rank(question: str, points: list) -> list[str]:
     """Table point ids ranked by content-word overlap with the question, best first.
 
@@ -179,57 +213,72 @@ def _reciprocal_rank_fusion(*rankings: list[str], k: int = 60) -> list[str]:
     return [item_id for item_id, _score in sorted(scores.items(), key=lambda kv: -kv[1])]
 
 
-def retrieve_tables(question: str, top_k: int = DEFAULT_TOP_K) -> list[dict]:
-    """Table definitions relevant to a question, dense and lexical search fused together.
+def _table_name(point) -> str:
+    return point.payload.get("fingerprint", {}).get("table_name") or _table_name_from_def(
+        point.payload.get("table_def", "")
+    )
 
-    Returns a list of {"table": name, "table_def": text, "fk_neighbours": [...]}, already
-    expanded to include whatever sits on the join path between the tables that were actually
-    retrieved.
+
+def retrieve_tables(question: str, top_k: Optional[int] = None) -> list[dict]:
+    """Table definitions relevant to a question.
+
+    Ordinarily adaptive: a table only makes the core set if its dense score is close to the
+    best match's own (see _CORE_SCORE_RATIO), so one dominant table stays alone rather than
+    dragging along whatever else happened to rank in some fixed top-k. A table the question
+    names outright is added regardless of its score. The core set is then expanded with
+    whatever sits on the join path between two core tables, since a join target does not
+    have to describe itself in words to be needed for a query that connects two things the
+    question did name.
+
+    top_k switches to the older, wider behaviour instead: every one of the top top_k tables
+    by fused dense-and-lexical rank, regardless of score gaps. Passed by a repair retry after
+    a query named a table this task's first, adaptive pass did not surface, where the point is
+    specifically to cast a net looser than "obviously close to the best match".
+
+    Returns a list of {"table": name, "table_def": text, "fk_neighbours": [...]}.
     """
     points = _all_table_points()
     if not points:
         return []
 
     by_id = {point.id: point for point in points}
-    candidate_pool = max(top_k * 3, 20)
+    pool_size = max((top_k or DEFAULT_TOP_K) * 3, 20)
 
     dense_hits = qdrant.query_points(
         collection_name=QDRANT_COLLECTION_TABLES,
         query=embed(question),
-        limit=min(candidate_pool, len(points)),
+        limit=min(pool_size, len(points)),
     ).points
-    dense_ranking = [hit.id for hit in dense_hits]
     lexical_ranking = _lexical_rank(question, points)
 
-    fused = _reciprocal_rank_fusion(dense_ranking, lexical_ranking)[:top_k]
-    if not fused:
-        fused = dense_ranking[:top_k]
+    if top_k is not None:
+        dense_ranking = [hit.id for hit in dense_hits]
+        fused = _reciprocal_rank_fusion(dense_ranking, lexical_ranking)[:top_k]
+        core_ids = set(fused or dense_ranking[:top_k])
+        core_names = {_table_name(by_id[pid]) for pid in core_ids if pid in by_id}
+    else:
+        top_score = dense_hits[0].score if dense_hits else 0
+        close_enough = [
+            hit for hit in dense_hits
+            if top_score > 0 and hit.score >= top_score * _CORE_SCORE_RATIO
+        ]
+        if not close_enough and dense_hits:
+            close_enough = dense_hits[:1]  # the best match always counts, even if score <= 0
+        core_names = {_table_name(by_id[hit.id]) for hit in close_enough if hit.id in by_id}
+        core_names |= _named_tables(question, points)
 
-    graph = {
-        (p.payload.get("fingerprint", {}).get("table_name") or _table_name_from_def(p.payload.get("table_def", ""))):
-            set(p.payload.get("fk_neighbours") or [])
-        for p in points
-    }
-    picked_names = {
-        by_id[pid].payload.get("fingerprint", {}).get("table_name")
-        or _table_name_from_def(by_id[pid].payload.get("table_def", ""))
-        for pid in fused
-        if pid in by_id
-    }
-    expanded_names = expand_with_joins(picked_names, graph)
+    graph = {_table_name(p): set(p.payload.get("fk_neighbours") or []) for p in points}
+    expanded_names = expand_with_joins(core_names, graph)
 
-    results = []
-    for point in points:
-        name = point.payload.get("fingerprint", {}).get("table_name") or _table_name_from_def(
-            point.payload.get("table_def", "")
-        )
-        if name in expanded_names:
-            results.append({
-                "table": name,
-                "table_def": point.payload.get("table_def", ""),
-                "fk_neighbours": sorted(point.payload.get("fk_neighbours") or []),
-            })
-    return results
+    return [
+        {
+            "table": _table_name(point),
+            "table_def": point.payload.get("table_def", ""),
+            "fk_neighbours": sorted(point.payload.get("fk_neighbours") or []),
+        }
+        for point in points
+        if _table_name(point) in expanded_names
+    ]
 
 
 def search_values(question: str, top_k: int = 10) -> list[dict]:
@@ -257,7 +306,7 @@ def search_values(question: str, top_k: int = 10) -> list[dict]:
     ]
 
 
-def get_relevant_schema(question: str, top_k: int = DEFAULT_TOP_K) -> str:
+def get_relevant_schema(question: str, top_k: Optional[int] = None) -> str:
     """Table definitions relevant to a question, as one block of text.
 
     Kept as a plain string for the callers that only ever wanted the schema to put in a

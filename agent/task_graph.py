@@ -11,6 +11,7 @@ by task_id.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Optional, TypedDict
 
 import sqlglot
@@ -24,6 +25,13 @@ from agent.state import ChatSession, TaskState, TokenUsage
 DEFAULT_MAX_ATTEMPTS = 2
 _WIDE_TOP_K = 16
 
+# The pipeline diagram's three data-touching stages. Bucketed the same way the single-task
+# graph originally grouped them: schema retrieval and value search under "retrieve", writing
+# and repairing SQL under "generate", running and verifying it under "execute".
+_PHASE_RETRIEVE = "retrieve"
+_PHASE_GENERATE = "generate"
+_PHASE_EXECUTE = "execute"
+
 
 class TaskGraphState(TypedDict, total=False):
     task: TaskState
@@ -34,6 +42,35 @@ class TaskGraphState(TypedDict, total=False):
     trace: list[dict[str, Any]]
     phase: str
     widen_retrieval: bool
+    # Seconds spent in each of the three stages above, for this task alone. Read-modify-write
+    # rather than a LangGraph reducer, same as usage and trace above: this graph's own nodes
+    # run one at a time, never in parallel with each other, so there is nothing here for a
+    # reducer to reconcile. What runs several of these graphs at once is agent/graph.py, which
+    # only ever sees the finished totals this graph returns, never these intermediate writes.
+    phase_times: dict[str, float]
+
+
+def _timed(phase: str):
+    """Wrap a node so the time it takes is added to this task's own phase_times.
+
+    Purely local bookkeeping inside one task's private state: safe to use even though several
+    of these graphs can be running on separate threads at once, because each one only ever
+    reads and writes its own state, never another task's.
+    """
+
+    def wrap(fn):
+        def run(state: TaskGraphState) -> dict:
+            started = time.perf_counter()
+            result = fn(state) or {}
+            elapsed = time.perf_counter() - started
+            times = dict(state.get("phase_times") or {})
+            times[phase] = times.get(phase, 0.0) + elapsed
+            return {**result, "phase_times": times}
+
+        run.__name__ = fn.__name__
+        return run
+
+    return wrap
 
 
 def _trace(state: TaskGraphState, node: str, event: str, detail: str = "", **data) -> list[dict]:
@@ -387,11 +424,11 @@ def route_after_repair(state: TaskGraphState) -> str:
 def build_task_graph():
     graph = StateGraph(TaskGraphState)
     graph.add_node("entry", node_entry)
-    graph.add_node("retrieve", node_retrieve)
-    graph.add_node("generate", node_generate)
-    graph.add_node("check_and_run", node_check_and_run)
-    graph.add_node("verify", node_verify)
-    graph.add_node("repair", node_repair)
+    graph.add_node("retrieve", _timed(_PHASE_RETRIEVE)(node_retrieve))
+    graph.add_node("generate", _timed(_PHASE_GENERATE)(node_generate))
+    graph.add_node("check_and_run", _timed(_PHASE_EXECUTE)(node_check_and_run))
+    graph.add_node("verify", _timed(_PHASE_EXECUTE)(node_verify))
+    graph.add_node("repair", _timed(_PHASE_GENERATE)(node_repair))
 
     graph.add_edge(START, "entry")
     graph.add_conditional_edges("entry", route_after_entry, {"retrieve": "retrieve", END: END})
@@ -410,9 +447,12 @@ def build_task_graph():
 _COMPILED = None
 
 
-def run_task(task: TaskState, model: str, session: ChatSession, max_attempts: int) -> tuple[TaskState, TokenUsage, list[dict]]:
-    """Run one task through its own graph to completion, and return it, its own token
-    usage, and its own trace, all for the caller to merge into the parent turn."""
+def run_task(
+    task: TaskState, model: str, session: ChatSession, max_attempts: int
+) -> tuple[TaskState, TokenUsage, list[dict], dict[str, float]]:
+    """Run one task through its own graph to completion, and return it, its own token usage,
+    its own trace, and the seconds it spent in each stage, all for the caller to merge into
+    the parent turn."""
     global _COMPILED
     if _COMPILED is None:
         _COMPILED = build_task_graph()
@@ -425,6 +465,7 @@ def run_task(task: TaskState, model: str, session: ChatSession, max_attempts: in
         "usage": TokenUsage(),
         "trace": [],
         "phase": "start",
+        "phase_times": {},
     }
     # Generous but bounded: entry, retrieve, generate, check_and_run, verify and repair once
     # per attempt, plus headroom. Sized per task since each task now runs in its own graph
@@ -432,4 +473,9 @@ def run_task(task: TaskState, model: str, session: ChatSession, max_attempts: in
     steps_per_attempt = 5
     limit = 6 + steps_per_attempt * (max_attempts + 1)
     final = _COMPILED.invoke(initial, config={"recursion_limit": limit})
-    return final["task"], final.get("usage") or TokenUsage(), list(final.get("trace") or [])
+    return (
+        final["task"],
+        final.get("usage") or TokenUsage(),
+        list(final.get("trace") or []),
+        dict(final.get("phase_times") or {}),
+    )

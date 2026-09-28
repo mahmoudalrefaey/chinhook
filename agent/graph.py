@@ -20,7 +20,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from agent import nodes, task_graph
-from agent.nodes import STAGE_GENERATE, STAGE_SUMMARISE, STAGE_UNDERSTAND
+from agent.nodes import STAGE_EXECUTE, STAGE_GENERATE, STAGE_RETRIEVE, STAGE_SUMMARISE, STAGE_UNDERSTAND
 from agent.session import new_chat
 from agent.state import (
     ChatSession,
@@ -34,15 +34,11 @@ from agent.state import (
 
 # How a stage label maps onto the pipeline the interface draws. One definition, imported by
 # chat_engine, so the diagram's keys and this module's stages cannot drift apart.
-#
-# Every task's own retrieve, generate, execute and verify steps run inside node_run_task,
-# which can be several tasks at once. There is no single "current stage" to announce while
-# that is happening the way there was when one task ran at a time, so the whole span is one
-# stage; see chat_engine.PIPELINE, which draws three nodes now rather than the five a
-# strictly sequential pipeline had room for.
 STAGE_TO_KEY = {
     STAGE_UNDERSTAND: "question",
+    STAGE_RETRIEVE: "retrieve",
     STAGE_GENERATE: "generate",
+    STAGE_EXECUTE: "execute",
     STAGE_SUMMARISE: "summarise",
 }
 
@@ -88,6 +84,32 @@ class Timing:
         self._stage = key
         self._mark = time.perf_counter()
 
+    def pause(self, announce_stage: Optional[str] = None) -> None:
+        """Close the current stage without opening a new one.
+
+        For the span where independent tasks are running, possibly several at once: there is
+        no single stage to attribute that whole span to the way there was when one task ran
+        at a time, so nothing here should keep accumulating into whichever stage happened to
+        be open before it. Each task instead times its own retrieve, generate and execute
+        locally and safely, on its own thread, and those totals are folded into self.stages
+        directly once every task has finished; see agent.graph.run_turn. announce_stage, when
+        given, still fires the interface's progress pulse for it.
+        """
+        self._close()
+        self._stage = None
+        if announce_stage is not None:
+            key = STAGE_TO_KEY.get(announce_stage, announce_stage)
+            if key != self._announced:
+                self._announced = key
+                self.announce(announce_stage)
+
+    def add_finished_stage(self, key: str, seconds: float) -> None:
+        """Record a stage's duration directly, computed elsewhere rather than measured by
+        entering and leaving it on this object. Used once every task in a turn has finished
+        and their own, separately-timed retrieve/generate/execute totals are ready to fold
+        into the same dictionary as the stages this object timed itself."""
+        self.stages[key] = self.stages.get(key, 0.0) + seconds
+
     def _close(self) -> None:
         if self._stage is None:
             return
@@ -128,12 +150,15 @@ def route_after_understand(state: GraphState):
     tasks = state.get("tasks") or []
     if not tasks:
         return "answer"
-    # Entered here, once, rather than from inside node_run_task: that node runs once per
-    # task, possibly several at the same time on separate threads, and Timing.enter mutates
-    # shared counters that are not safe to touch from more than one thread at once. Called
-    # from this routing function instead, which LangGraph only ever calls once and
-    # synchronously, right before the tasks it is about to dispatch actually start.
-    state["timing"].enter(STAGE_GENERATE)
+    # Paused here, once, rather than timed from inside node_run_task: that node runs once per
+    # task, possibly several at once on separate threads, and Timing.enter mutates shared
+    # counters that are not safe to touch from more than one thread at a time. Called from
+    # this routing function instead, which LangGraph only ever calls once and synchronously,
+    # right before the tasks it is about to dispatch actually start. Each task's own retrieve,
+    # generate and execute times are measured on its own thread instead (see
+    # agent/task_graph.py) and folded into this same Timing object afterwards, once every
+    # task has finished and there is no more concurrent access to guard against.
+    state["timing"].pause(announce_stage=STAGE_RETRIEVE)
     return [
         Send("run_task", {"tasks": [t], "model": state["model"], "session": state["session"],
                            "max_attempts": state.get("max_attempts", DEFAULT_MAX_ATTEMPTS)})
@@ -148,14 +173,19 @@ def node_run_task(state: GraphState) -> dict:
 
     state here is this branch's own local view: Send gave it exactly one task, and nothing
     it does can be seen by any other branch until this returns. Not wrapped in _timed: see
-    the note in route_after_understand on why the shared Timing object is entered from there
-    instead, once, rather than from here on every task's own thread.
+    the note in route_after_understand on why the shared Timing object is paused from there
+    instead, once, rather than entered from here on every task's own thread.
     """
     task = state["tasks"][0]
-    finished, spent, task_trace = task_graph.run_task(
+    finished, spent, task_trace, phase_times = task_graph.run_task(
         task, state["model"], state["session"], state.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
     )
-    return {"tasks": [finished], "task_usages": [spent], "trace": task_trace}
+    return {
+        "tasks": [finished],
+        "task_usages": [spent],
+        "trace": task_trace,
+        "task_phase_times": [phase_times],
+    }
 
 
 def build_graph():
@@ -228,6 +258,7 @@ def run_turn(
         "trace": [],
         "usage": TokenUsage(),
         "task_usages": [],
+        "task_phase_times": [],
         "max_attempts": max_attempts,
         "clarification": None,
         "understanding": Understanding(),
@@ -243,6 +274,18 @@ def run_turn(
     except Exception as exc:  # noqa: BLE001
         message = re.sub(r"\x1b\[[0-9;]*m", "", str(exc))
         raise WorkflowError(f"{type(exc).__name__}: {message}") from exc
+
+    # Every task has finished by this point, so there is no more concurrent access to guard
+    # against: each task's own retrieve/generate/execute seconds, timed locally on its own
+    # thread while it ran, are folded into the same totals the sequential stages timed
+    # themselves. A stage the same task passed through more than once, on a retry, has
+    # already summed to one number inside agent.task_graph.run_task; the max across tasks is
+    # what is taken here, since independent tasks ran that stage at the same time as each
+    # other, not one after another.
+    for key in ("retrieve", "generate", "execute"):
+        per_task = [times.get(key, 0.0) for times in (final.get("task_phase_times") or [])]
+        if per_task:
+            timing.add_finished_stage(key, max(per_task))
 
     result = _result_from_state(final, question, model, session)
     result["timings"] = timing.as_dict()

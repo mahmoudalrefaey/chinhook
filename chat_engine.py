@@ -14,12 +14,14 @@ import time
 
 import config
 from agent.graph import DEFAULT_MAX_ATTEMPTS, STAGE_TO_KEY, WorkflowError, run_turn
-from agent.nodes import STAGE_GENERATE, STAGE_SUMMARISE, STAGE_UNDERSTAND
+from agent.nodes import STAGE_EXECUTE, STAGE_GENERATE, STAGE_RETRIEVE, STAGE_SUMMARISE, STAGE_UNDERSTAND
 from agent.session import new_chat
 
 __all__ = [
     "PIPELINE",
+    "STAGE_EXECUTE",
     "STAGE_GENERATE",
+    "STAGE_RETRIEVE",
     "STAGE_SUMMARISE",
     "STAGE_TO_KEY",
     "STAGE_UNDERSTAND",
@@ -31,14 +33,18 @@ __all__ = [
 ]
 
 # The interface draws these as a row of nodes and lights each one up as it happens. The keys
-# match the keys used in the timings dictionary returned by answer(). Three nodes, not five:
-# retrieval, writing SQL and running it all happen inside one task's own graph, for however
-# many tasks a message became, possibly several at once, so there is no single moment that is
-# reliably "retrieving" or "executing" the way there was when one task ran at a time.
+# match the keys used in the timings dictionary returned by answer(). Retrieval, writing SQL
+# and running it happen inside one task's own graph, for however many tasks a message became,
+# possibly several at once (see agent/task_graph.py); each task times its own three stages on
+# its own thread, and those are folded into one total per stage, across every task in the
+# turn, before this dictionary is built, so the diagram still lights up each one in turn even
+# though nothing here is watching a single task run through them in real time.
 PIPELINE = [
     {"key": "question", "title": "Question", "detail": "Plain language in"},
-    {"key": "generate", "title": "Answer it", "detail": "Retrieve, write SQL, run it, verify it"},
-    {"key": "summarise", "title": "Reply", "detail": "Azure OpenAI writes the answer"},
+    {"key": "retrieve", "title": "Retrieve", "detail": "Azure embedding, Qdrant search"},
+    {"key": "generate", "title": "Write SQL", "detail": "Azure OpenAI with a tool call"},
+    {"key": "execute", "title": "Query", "detail": "Postgres, read only"},
+    {"key": "summarise", "title": "Answer", "detail": "Azure OpenAI writes the reply"},
 ]
 
 

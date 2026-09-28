@@ -18,7 +18,9 @@ from agent.nodes.answer import node_answer
 from agent.nodes.clarify import node_clarify
 from agent.nodes.common import (
     BASE_SQL_RULES,
+    STAGE_EXECUTE,
     STAGE_GENERATE,
+    STAGE_RETRIEVE,
     STAGE_SUMMARISE,
     STAGE_UNDERSTAND,
 )
@@ -28,7 +30,9 @@ from agent.nodes.understand import node_understand
 
 __all__ = [
     "BASE_SQL_RULES",
+    "STAGE_EXECUTE",
     "STAGE_GENERATE",
+    "STAGE_RETRIEVE",
     "STAGE_SUMMARISE",
     "STAGE_UNDERSTAND",
     "node_answer",

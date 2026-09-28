@@ -387,7 +387,13 @@ def merge_tasks(existing: Optional[list[TaskState]], update) -> list[TaskState]:
     return [by_id[key] for key in sorted(by_id)]
 
 
-def _sum_usage(existing: list[TokenUsage], update) -> list[TokenUsage]:
+def _concat(existing: Optional[list], update) -> list:
+    """Collect one entry per task branch, in whatever order they finished.
+
+    Used for both task_usages and task_phase_times: neither needs merging by id the way tasks
+    does, since nothing ever revises an earlier task's contribution to either, only adds to
+    them, and the order they are summed or maxed in afterwards does not matter.
+    """
     incoming = update if isinstance(update, list) else [update]
     return [*(existing or []), *incoming]
 
@@ -414,7 +420,12 @@ class GraphState(TypedDict, total=False):
     # understanding, the final reply): the two are combined into one total only once, when
     # the turn's result is built, rather than both trying to accumulate into the same key
     # from steps that can run in parallel with each other.
-    task_usages: Annotated[list[TokenUsage], _sum_usage]
+    task_usages: Annotated[list[TokenUsage], _concat]
+    # Seconds spent in each of retrieve/generate/execute, one dict per task, each timed
+    # locally on that task's own thread (see agent/task_graph.py) rather than through the
+    # shared Timing object every other stage uses. Folded into that object's own totals only
+    # once every task has finished; see run_turn.
+    task_phase_times: Annotated[list[dict[str, float]], _concat]
     max_attempts: int
 
     understanding: Understanding

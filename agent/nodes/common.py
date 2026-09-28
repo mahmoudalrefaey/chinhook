@@ -14,9 +14,13 @@ from agent.state import GraphState, TaskState, TokenUsage, Understanding
 STAGE_UNDERSTAND = "Reading the question"
 # Retrieval, writing SQL, running it and verifying it all happen inside one task's own graph
 # (agent/task_graph.py), for however many tasks a message turned into, possibly at the same
-# time as each other. There is no single "current stage" to announce while that is
-# happening the way there was when one task ran at a time, so the whole span is one stage.
-STAGE_GENERATE = "Answering the question"
+# time as each other. Each task's graph times its own stages locally (safe: that state is
+# private to the one task running it) and hands the totals back to be combined once every
+# task has finished, so these three labels still mean what they always did even though
+# nothing here enters or announces them directly the way node_understand and node_answer do.
+STAGE_RETRIEVE = "Finding relevant tables"
+STAGE_GENERATE = "Writing the query"
+STAGE_EXECUTE = "Running it against the database"
 STAGE_SUMMARISE = "Putting the answer together"
 
 
