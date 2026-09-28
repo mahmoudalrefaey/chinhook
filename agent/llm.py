@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import config
 from agent.state import TokenUsage
@@ -72,6 +72,52 @@ def chat_text(
         max_completion_tokens=max_completion_tokens,
     )
     return (message.content or ""), usage
+
+
+def chat_stream(
+    model: str,
+    system: str,
+    user: str,
+    on_token: Optional[Callable[[str], None]] = None,
+    max_completion_tokens: Optional[int] = None,
+) -> tuple[str, TokenUsage]:
+    """A single-turn text call, with the reply pushed to on_token as it is written.
+
+    Falls back to chat_text when no callback is given, so a caller that has nowhere to show a
+    live reply, such as chat_engine.compare, is not paying for a streamed response it reads no
+    faster than a finished one.
+    """
+    if on_token is None:
+        return chat_text(model, system, user, max_completion_tokens=max_completion_tokens)
+
+    client = config.create_azure_client(model)
+    deployment = config.get_model_config(model)["deployment"]
+    kwargs: dict[str, Any] = {
+        "model": deployment,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "temperature": 0,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    if max_completion_tokens:
+        kwargs["max_completion_tokens"] = max_completion_tokens
+
+    parts: list[str] = []
+    usage = TokenUsage(llm_calls=1)
+    for chunk in client.chat.completions.create(**kwargs):
+        if chunk.usage:
+            usage.input_tokens = chunk.usage.prompt_tokens or 0
+            usage.output_tokens = chunk.usage.completion_tokens or 0
+        if not chunk.choices or chunk.choices[0].delta is None:
+            # The usage-carrying chunk stream_options asks for arrives this way on some
+            # deployments: choices holding one entry whose delta is None, rather than an
+            # empty choices list. Either shape means there is no text in this chunk.
+            continue
+        delta = chunk.choices[0].delta.content
+        if delta:
+            parts.append(delta)
+            on_token(delta)
+    return "".join(parts), usage
 
 
 def parse_json(text: str) -> Optional[Any]:

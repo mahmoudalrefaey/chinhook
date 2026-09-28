@@ -235,6 +235,7 @@ def run_turn(
     session: Optional[ChatSession] = None,
     model: Optional[str] = None,
     on_stage: Optional[Callable[[str], None]] = None,
+    on_token: Optional[Callable[[str], None]] = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> dict[str, Any]:
     """Answer one question inside one chat, and report everything that happened.
@@ -242,6 +243,7 @@ def run_turn(
     The returned dict carries the shape chat_engine already hands the interface, plus the
     per-task states, the workflow trace and the token counts. Failures come back inside the
     result rather than raised, so the interface renders a message rather than a traceback.
+    on_token, when given, is called with each chunk of the reply as the answer node writes it.
     """
     import config
 
@@ -265,6 +267,7 @@ def run_turn(
         "original_question": "",
         "clarification_answer": "",
         "timing": timing,
+        "on_token": on_token,
     }
 
     try:

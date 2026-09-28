@@ -152,6 +152,7 @@ def node_answer(state: GraphState) -> dict:
     tasks = state.get("tasks") or []
     model = state["model"]
     usage = state.get("usage") or TokenUsage()
+    on_token = state.get("on_token")
 
     if understanding.clarity == "unsupported":
         reason = understanding.unsupported_reason or "it is not something this database can answer."
@@ -175,8 +176,8 @@ def node_answer(state: GraphState) -> dict:
         # cannot end up quoting an error message; the reason stays in the trace, where it is
         # readable by whoever is looking after this.
         detail = _failure_blocks(failed)
-        text, spent = llm.chat_text(
-            model, _ANSWER_SYSTEM, detail, max_completion_tokens=600
+        text, spent = llm.chat_stream(
+            model, _ANSWER_SYSTEM, detail, on_token=on_token, max_completion_tokens=600
         )
         usage.add(spent)
         text = (text or "").strip()
@@ -185,6 +186,8 @@ def node_answer(state: GraphState) -> dict:
             text = "\n".join(
                 f"- {task.question or task.raw} could not be answered." for task in failed
             ) or "That could not be answered."
+            if on_token:
+                on_token(text)
         return {
             "answer": text,
             "answer_kind": "failed",
@@ -272,11 +275,16 @@ def node_answer(state: GraphState) -> dict:
 
     # Enough room for a reply that carries a heading, a table and a sentence of context
     # for each of several requested items, rather than one that gets cut off mid-table.
-    text, spent = llm.chat_text(
-        model, _ANSWER_SYSTEM, "\n\n".join(blocks), max_completion_tokens=2000
+    text, spent = llm.chat_stream(
+        model, _ANSWER_SYSTEM, "\n\n".join(blocks), on_token=on_token, max_completion_tokens=2000
     )
     usage.add(spent)
+    before = len(text)
     text = _ensure_every_result_is_reported(text, verified)
+    if on_token and len(text) > before:
+        # Only ever appends a result the reply left out, so the new tail is exactly what
+        # streamed out never carried; the caller's own display just needs the difference.
+        on_token(text[before:])
     kind = "partial" if failed else "answer"
     return {
         "answer": text,

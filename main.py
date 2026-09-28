@@ -204,8 +204,19 @@ def run_cli():
             # calling the workflow directly, which is what the web interface already does, so
             # the terminal and the browser handle a failure the same way.
             print("\nProcessing...")
+            print("\n" + "=" * 60)
+            print("Response:")
+            print("=" * 60)
+            streamed = []
+
+            def on_token(tok):
+                streamed.append(tok)  # noqa: B023 -- called synchronously within this same iteration
+                print(tok, end="", flush=True)
+
             try:
-                result = chat_engine.answer(user_query, current_model, session=chat)
+                result = chat_engine.answer(
+                    user_query, current_model, session=chat, on_token=on_token
+                )
             except Exception as e:  # noqa: BLE001
                 # chat_engine.answer already catches everything it knows how to handle, so
                 # reaching here means something outside that. Reported and moved on from
@@ -214,19 +225,20 @@ def run_cli():
                 print("Please try again or type 'help' for assistance.")
                 continue
 
-            if show_internal:
-                print_internal(result)
-
-            print("\n" + "=" * 60)
-            print("Response:")
-            print("=" * 60)
             if result.get("answer"):
-                print(result["answer"])
+                if not streamed:
+                    # Nothing streamed: a greeting or a clarification is written outside the
+                    # node that streams, so it is printed whole instead.
+                    print(result["answer"], end="")
+                print()
             elif result.get("error"):
                 print(f"Error: {result['error']}")
             else:
                 print("The assistant did not return an answer. Try asking again.")
             print("=" * 60)
+
+            if show_internal:
+                print_internal(result)
 
         except KeyboardInterrupt:
             print("\n\nInterrupted. Goodbye!")

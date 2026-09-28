@@ -11,6 +11,7 @@ them.
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import config
 from agent.graph import DEFAULT_MAX_ATTEMPTS, STAGE_TO_KEY, WorkflowError, run_turn
@@ -73,12 +74,17 @@ def _blank_result(model_name):
     }
 
 
-def answer(question, model_name=None, on_stage=None, session=None, max_attempts=DEFAULT_MAX_ATTEMPTS):
+def answer(
+    question, model_name=None, on_stage=None, on_token=None, session=None,
+    max_attempts=DEFAULT_MAX_ATTEMPTS,
+):
     """Answer one question and report everything that happened along the way.
 
     on_stage is called with a short label before each step so the caller can show progress.
-    Failures are returned inside the result rather than raised, so the interface can render
-    a message instead of a stack trace.
+    on_token, when given, is called with each chunk of the reply as it is written, so a caller
+    with somewhere live to show it does not have to wait for the whole thing. Failures are
+    returned inside the result rather than raised, so the interface can render a message
+    instead of a stack trace.
 
     session is the conversation this question belongs to. Passing one keeps context across
     turns; leaving it None gives the question an empty conversation of its own, which is what
@@ -94,6 +100,7 @@ def answer(question, model_name=None, on_stage=None, session=None, max_attempts=
             session=session,
             model=model_name,
             on_stage=on_stage,
+            on_token=on_token,
             max_attempts=max_attempts,
         )
     except WorkflowError as exc:
@@ -106,48 +113,61 @@ def answer(question, model_name=None, on_stage=None, session=None, max_attempts=
     return result
 
 
-def compare(question, models=None, on_progress=None, session=None):
-    """Answer the same question with each model in turn.
+def compare(question, models=None, session=None):
+    """Answer the same question with every model at once, each in its own thread.
 
-    The models run one after another rather than at the same time. The database connection
-    in scripts/db_module.py is a single module level object shared by everything, and
-    psycopg2 connections are not safe to use from two places at once, so running the models
-    concurrently would risk interleaving two queries on one connection.
+    scripts.db.clients hands out a separate pooled connection per query rather than one
+    connection shared by everything, so two models running at the same time never touch the
+    same connection.
     """
     models = models or available_models()
-    results = {}
-    for name in models:
-        if on_progress:
-            on_progress(name)
+    with ThreadPoolExecutor(max_workers=len(models)) as pool:
         # Each model gets its own conversation: a comparison is a standalone question, and
         # one model's findings must not become the other's context.
-        results[name] = answer(question, name, session=session or new_chat())
-    return results
+        futures = {
+            name: pool.submit(answer, question, name, session=session or new_chat())
+            for name in models
+        }
+        return {name: futures[name].result() for name in models}
 
 
 def schema_overview():
-    """Every table in the database with its columns and row count, read live.
+    """Every table in the database with its columns and an approximate row count.
 
-    Nothing is hardcoded. This is the same information the indexer embeds, so it doubles as
-    a way to see what the model is given to work with.
+    The count comes from the planner's own pg_class.reltuples estimate, kept current by
+    ANALYZE at index time (see scripts/db/indexing.py), not a live COUNT(*) per table: on a
+    database sized in the millions of rows, a COUNT(*) per table would make this overview
+    itself the slow thing to load. Nothing is hardcoded; every query here reads the database's
+    own catalogs, the same ones the indexer reads.
     """
-    from psycopg2 import sql
-
     from scripts.db_module import get_connection, get_table_names
 
-    tables = []
     with get_connection() as conn:
-        for name in get_table_names(conn):
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT column_name, data_type
-                       FROM information_schema.columns
-                       WHERE table_schema = 'public' AND table_name = %s
-                       ORDER BY ordinal_position""",
-                    (name,),
-                )
-                columns = cur.fetchall()
-                cur.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(name)))
-                count = cur.fetchone()[0]
-            tables.append({"table": name, "columns": columns, "rows": count})
-    return tables
+        names = get_table_names(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT c.relname, GREATEST(c.reltuples, 0)::bigint
+                   FROM pg_class c
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = 'public' AND c.relkind = 'r'"""
+            )
+            row_estimates = dict(cur.fetchall())
+
+            cur.execute(
+                """SELECT table_name, column_name, data_type
+                   FROM information_schema.columns
+                   WHERE table_schema = 'public'
+                   ORDER BY table_name, ordinal_position"""
+            )
+            columns_by_table: dict[str, list[tuple[str, str]]] = {}
+            for table, column, dtype in cur.fetchall():
+                columns_by_table.setdefault(table, []).append((column, dtype))
+
+    return [
+        {
+            "table": name,
+            "columns": columns_by_table.get(name, []),
+            "rows": int(row_estimates.get(name, 0)),
+        }
+        for name in names
+    ]

@@ -14,7 +14,6 @@ writes directly, sitting inside that box rather than being that box, sidesteps t
 the div sizes itself to its own content regardless of what the ancestor around it measured.
 """
 
-import time
 from pathlib import Path
 
 import pandas as pd
@@ -45,17 +44,6 @@ def load_styles():
 
 load_styles()
 
-
-# ---------- bubble rendering ----------
-
-def stream_bubble(placeholder, text, size=3, pause=0.012):
-    """Type the answer into its own bubble div, chunk by chunk, in place."""
-    shown = ""
-    for start in range(0, len(text), size):
-        shown += text[start:start + size]
-        placeholder.markdown(bubble("assistant", text_to_html(shown), "live"),
-                              unsafe_allow_html=True)
-        time.sleep(pause)
 
 try:
     # ui.render itself imports chat_engine, and everything chat_engine pulls in behind it
@@ -543,6 +531,7 @@ with chat_tab:
             slot = st.empty()
             answer_slot = st.empty()
             finished = ["question"]
+            streamed = []
 
             def advance(label):
                 key = chat_engine.STAGE_TO_KEY.get(label)
@@ -554,8 +543,20 @@ with chat_tab:
                 if key:
                     finished.append(key)
 
+            def on_token(chunk):
+                # The reply has started arriving, so the "thinking" indicator for the answer
+                # stage has nothing left to say that the words themselves don't already.
+                slot.empty()
+                streamed.append(chunk)
+                answer_slot.markdown(
+                    bubble("assistant", text_to_html("".join(streamed)), "live"),
+                    unsafe_allow_html=True,
+                )
+
             diagram.markdown(pipeline_html(completed=finished), unsafe_allow_html=True)
-            result = chat_engine.answer(question, model, on_stage=advance, session=chat_session())
+            result = chat_engine.answer(
+                question, model, on_stage=advance, on_token=on_token, session=chat_session()
+            )
             diagram.empty()
             slot.empty()
             # Saved regardless of whether the turn succeeded: a failed turn, or one still
@@ -563,7 +564,13 @@ with chat_tab:
             _save_chat_session()
 
             if result["ok"] and result.get("answer"):
-                stream_bubble(answer_slot, result["answer"])
+                if not streamed:
+                    # Nothing streamed: a greeting or a clarification is written outside the
+                    # node that streams, so the whole reply arrives at once instead.
+                    answer_slot.markdown(
+                        bubble("assistant", text_to_html(result["answer"]), "live"),
+                        unsafe_allow_html=True,
+                    )
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": result["answer"],
@@ -590,9 +597,9 @@ with compare_tab:
     st.markdown('<div class="page-title">Put both models on the same question</div>',
                 unsafe_allow_html=True)
     st.markdown(
-        '<div class="page-subtitle">The same question goes to both deployments, one after '
-        "the other, and the answers sit side by side with the SQL each one wrote and how "
-        "long it took. They run in sequence because the database connection is shared.</div>",
+        '<div class="page-subtitle">The same question goes to both deployments at the same '
+        "time, and the answers sit side by side with the SQL each one wrote and how long it "
+        "took.</div>",
         unsafe_allow_html=True,
     )
     st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
@@ -609,12 +616,8 @@ with compare_tab:
             st.markdown(f'<div class="notice">{escape_text(notice)}</div>', unsafe_allow_html=True)
         else:
             progress = st.empty()
-            outcomes = chat_engine.compare(
-                asked,
-                on_progress=lambda name: progress.markdown(
-                    thinking(f"Asking {name}"), unsafe_allow_html=True
-                ),
-            )
+            progress.markdown(thinking("Asking every model"), unsafe_allow_html=True)
+            outcomes = chat_engine.compare(asked)
             progress.empty()
             st.session_state.comparison = {"question": asked, "results": outcomes}
 

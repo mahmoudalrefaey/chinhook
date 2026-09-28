@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import operator
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, Optional, TypedDict
+from typing import Annotated, Any, Callable, Literal, Optional, TypedDict
 
 # The most tasks a single message is ever decomposed into. LangGraph's own recursion limit
 # has to be set once, before the graph runs, at a point where the real number of tasks a
@@ -443,3 +443,7 @@ class GraphState(TypedDict, total=False):
     answer_kind: str
     error: Optional[str]
     timing: Any
+    # Called with each chunk of the reply as the answer node writes it, so a caller with
+    # somewhere live to show it (the page, the terminal) is not stuck waiting for the whole
+    # thing. None everywhere else, which is what a caller with nowhere to stream to wants.
+    on_token: Optional[Callable[[str], None]]
