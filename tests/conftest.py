@@ -1,9 +1,9 @@
 """Shared fixtures.
 
-Unit tests run with nothing else running: no database, no Qdrant, no Ollama, no Azure
-credentials. Anything that needs one of those is an integration test, marked as such, and is
-skipped automatically rather than failing when the stack it needs is not reachable, so the
-unit suite stays something that can run anywhere in a few seconds.
+Unit tests run with nothing else running: no database, no Qdrant, no Azure credentials.
+Anything that needs one of those is an integration test, marked as such, and is skipped
+automatically rather than failing when the stack it needs is not reachable, so the unit
+suite stays something that can run anywhere in a few seconds.
 """
 
 import socket

@@ -11,7 +11,6 @@ dependencies = [
     # the way they were written, and the Dockerfile's "uv sync --frozen" installs it.
     "markdown>=3.5",
     "nh3>=0.3.7",
-    "ollama>=0.6.2",
     "openai>=3.16.2",
     "pandas>=3.0.6",
     "psycopg2-binary>=2.9.13",
@@ -34,7 +33,7 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "integration: needs a reachable Postgres and Qdrant; skipped when they are not",
-    "llm: needs real Azure OpenAI credentials and Ollama, on top of integration's needs",
+    "llm: needs real Azure OpenAI credentials, on top of integration's needs",
 ]
 
 [tool.ruff]

@@ -43,7 +43,7 @@ __all__ = [
 # match the keys used in the timings dictionary returned by answer().
 PIPELINE = [
     {"key": "question", "title": "Question", "detail": "Plain language in"},
-    {"key": "retrieve", "title": "Retrieve", "detail": "Ollama embedding, Qdrant search"},
+    {"key": "retrieve", "title": "Retrieve", "detail": "Azure embedding, Qdrant search"},
     {"key": "generate", "title": "Write SQL", "detail": "Azure OpenAI with a tool call"},
     {"key": "execute", "title": "Query", "detail": "Postgres, read only"},
     {"key": "summarise", "title": "Answer", "detail": "Azure OpenAI writes the reply"},

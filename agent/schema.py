@@ -196,9 +196,11 @@ def retrieve_for_task(task, cache: SchemaCache) -> tuple[str, list[str], bool]:
 def all_schema_text() -> str:
     """Every table definition in the index, used when a task needs the whole picture.
 
-    Still routed through get_relevant_schema so the small-schema behaviour and the search
-    behaviour both stay in one place.
+    Genuinely every table, not a search result: routing this through get_relevant_schema
+    instead used to return only the top few hits for whatever the question happened to be,
+    which on a schema with more tables than that top-k defeats the entire point of asking for
+    the whole picture.
     """
-    from scripts.db_module import get_relevant_schema
+    from scripts.db_module import all_schema_text as _all_schema_text
 
-    return get_relevant_schema("list every table in the database")
+    return _all_schema_text()

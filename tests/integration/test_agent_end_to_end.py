@@ -1,5 +1,5 @@
-"""A handful of real questions through the actual agent workflow, live: Azure, Postgres,
-Qdrant and Ollama all genuinely called, exactly as a real user's question would.
+"""A handful of real questions through the actual agent workflow, live: Azure, Postgres
+and Qdrant all genuinely called, exactly as a real user's question would.
 
 Kept small and specific on purpose. This is not where breadth belongs, since every case here
 costs a handful of real model calls; the unit suite is where the logic each of these depends

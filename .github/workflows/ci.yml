@@ -29,8 +29,8 @@ jobs:
       - run: uv run pytest tests/unit -v
 
   # Everything reachable with just a database: the read-only role guarantee and the durable
-  # conversation store. Neither needs Azure or Ollama, so this runs on every push with no
-  # secrets required.
+  # conversation store. Neither needs Azure, so this runs on every push with no secrets
+  # required.
   integration-tests:
     runs-on: ubuntu-latest
     services:
@@ -60,11 +60,11 @@ jobs:
         env:
           PGPASSWORD: chinook_ci
         run: |
-          curl -fsSL -o /tmp/chinook.sql \
-            https://raw.githubusercontent.com/lerocha/chinook-database/master/ChinookDatabase/DataSources/Chinook_PostgreSql.sql
+          # The same schema file docker-compose.local-db.yml loads into a local Postgres, so
+          # there is one copy of it rather than this job fetching its own from upstream.
           # The upstream script creates and connects to its own "chinook" database; run it as
           # the same superuser the service container already has.
-          psql -h localhost -U postgres -f /tmp/chinook.sql
+          psql -h localhost -U postgres -f docker/postgres-initdb/01-chinook-schema.sql
           psql -h localhost -U postgres -d chinook <<'SQL'
             CREATE ROLE chinhook_ro WITH LOGIN PASSWORD 'chinook_ci_ro' NOSUPERUSER NOCREATEDB NOCREATEROLE;
             GRANT CONNECT ON DATABASE chinook TO chinhook_ro;
@@ -82,11 +82,12 @@ jobs:
           QDRANT_URL: http://localhost:6333
         run: uv run pytest tests/integration -v -m "integration and not llm"
 
-  # The full agent workflow, needing real Azure OpenAI credentials and a running Ollama with
-  # the embedding model pulled. Skipped entirely on a fork or a repo where these secrets have
-  # not been configured, rather than failing the whole pipeline over something outside this
+  # The full agent workflow, needing real Azure OpenAI credentials for both the chat and the
+  # embedding deployments. Skipped entirely on a fork or a repo where these secrets have not
+  # been configured, rather than failing the whole pipeline over something outside this
   # code's control. Set AZURE_OPENAI_KEY, DEPLOYMENT1_NAME, AZURE_OPENAI_ENDPOINT1,
-  # DEPLOYMENT2_NAME and AZURE_OPENAI_ENDPOINT2 as repository secrets to enable it.
+  # DEPLOYMENT2_NAME, AZURE_OPENAI_ENDPOINT2, AZURE_EMBEDDING_KEY and AZURE_EMBEDDING_ENDPOINT
+  # as repository secrets to enable it.
   end-to-end-tests:
     runs-on: ubuntu-latest
     if: ${{ vars.RUN_LLM_TESTS == 'true' }}
@@ -117,16 +118,7 @@ jobs:
         env:
           PGPASSWORD: chinook_ci
         run: |
-          curl -fsSL -o /tmp/chinook.sql \
-            https://raw.githubusercontent.com/lerocha/chinook-database/master/ChinookDatabase/DataSources/Chinook_PostgreSql.sql
-          psql -h localhost -U postgres -f /tmp/chinook.sql
-
-      - name: Install Ollama and pull the embedding model
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          for i in $(seq 1 30); do curl -fs http://127.0.0.1:11434/api/version > /dev/null && break; sleep 1; done
-          ollama pull nomic-embed-text
+          psql -h localhost -U postgres -f docker/postgres-initdb/01-chinook-schema.sql
 
       - name: Run the full agent workflow against real Azure OpenAI
         env:
@@ -137,6 +129,8 @@ jobs:
           AZURE_OPENAI_ENDPOINT1: ${{ secrets.AZURE_OPENAI_ENDPOINT1 }}
           DEPLOYMENT2_NAME: ${{ secrets.DEPLOYMENT2_NAME }}
           AZURE_OPENAI_ENDPOINT2: ${{ secrets.AZURE_OPENAI_ENDPOINT2 }}
+          AZURE_EMBEDDING_KEY: ${{ secrets.AZURE_EMBEDDING_KEY }}
+          AZURE_EMBEDDING_ENDPOINT: ${{ secrets.AZURE_EMBEDDING_ENDPOINT }}
         run: |
           uv run python scripts/indexer.py --full
           uv run pytest tests/integration -v -m llm

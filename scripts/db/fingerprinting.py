@@ -1,38 +1,32 @@
-"""Whether the index still matches the database.
+"""Whether the index still matches the database's shape.
 
 A fingerprint per table is compared against the one stored with its indexed definition, so
-a re-index happens when a table's shape or its contents change, and not otherwise.
+a re-index happens when a table's columns or its foreign keys change, and not otherwise.
+
+Deliberately shape-only, not content-only: on a database sized in the millions of rows,
+hashing every row of every table on every check would itself be the expensive operation this
+exists to avoid. A schema this size changes by migration, not by an UPDATE somewhere inside
+its data, so a column list and a foreign key list are what actually distinguish "this table
+means something different now" from "someone inserted more rows into it", which is the
+distinction the description and the join graph in the index care about. Row count is kept as
+a coarse extra signal, read from the planner's own statistics rather than counted directly,
+so it costs nothing beyond a catalog lookup even on a table nobody has ever run COUNT(*)
+against.
 """
 
 import hashlib
 import json
 
-from psycopg2 import sql
-
-from config import QDRANT_COLLECTION
+from config import QDRANT_COLLECTION_TABLES
 from scripts.db.clients import qdrant
-from scripts.db.introspection import get_table_names
-
-_LARGE_TABLE_ROWS = 10000
-_SAMPLE_ROWS = 1000
+from scripts.db.introspection import get_foreign_keys, get_table_names
 
 
-def compute_table_fingerprint(conn, table_name: str, schema_name: str = "public") -> dict:
-    """Row count, schema shape and a content checksum for one table.
-
-    The content checksum is computed inside Postgres rather than in Python: the row content
-    is aggregated and hashed server side, with an explicit ORDER BY so the result does not
-    depend on whatever physical order the engine happens to return rows in, and, for a large
-    table, a REPEATABLE seed so the sample is the same sample every time this runs rather than
-    a fresh random one. Without both of those, the fingerprint of a completely unchanged table
-    could differ from one check to the next, which used to trigger a real re-index, model call
-    and all, for no actual change.
-    """
-    table_ident = sql.Identifier(schema_name, table_name)
+def compute_table_fingerprint(
+    conn, table_name: str, foreign_keys: dict[str, set[str]], schema_name: str = "public"
+) -> dict:
+    """Column shape, joined tables and an approximate row count for one table."""
     with conn.cursor() as cur:
-        cur.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(table_ident))
-        row_count = cur.fetchone()[0]
-
         cur.execute(
             """SELECT column_name, data_type, is_nullable, column_default
                FROM information_schema.columns
@@ -41,38 +35,36 @@ def compute_table_fingerprint(conn, table_name: str, schema_name: str = "public"
             (schema_name, table_name),
         )
         cols = cur.fetchall()
-        schema_hash = hashlib.sha256(
-            json.dumps(cols, sort_keys=True, default=str).encode()
-        ).hexdigest()[:16]
 
-        if row_count > _LARGE_TABLE_ROWS:
-            from_clause = sql.SQL("FROM {} AS t TABLESAMPLE SYSTEM (10) REPEATABLE (42)").format(
-                table_ident
-            )
-            limit_clause = sql.SQL("LIMIT {}").format(sql.Literal(_SAMPLE_ROWS))
-        else:
-            from_clause = sql.SQL("FROM {} AS t").format(table_ident)
-            limit_clause = sql.SQL("")
         cur.execute(
-            sql.SQL(
-                "SELECT md5(coalesce(string_agg(row_text, '' ORDER BY row_text), '')) "
-                "FROM (SELECT (t.*)::text AS row_text {} {}) s"
-            ).format(from_clause, limit_clause)
+            "SELECT reltuples FROM pg_class WHERE oid = %s::regclass",
+            (f'"{schema_name}"."{table_name}"',),
         )
-        data_hash = cur.fetchone()[0]
+        row = cur.fetchone()
+        # -1 means the planner has never analysed this table; 0 is the more honest "unknown
+        # yet" starting point for a table that has never been counted at all, and it self
+        # corrects the first time autovacuum or an explicit ANALYZE runs.
+        row_estimate = max(0, int(row[0])) if row and row[0] is not None else 0
+
+    joined = sorted(foreign_keys.get(table_name, set()))
+    shape_hash = hashlib.sha256(
+        json.dumps({"columns": cols, "joined": joined}, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
 
     return {
         "table_name": table_name,
-        "row_count": row_count,
-        "schema_hash": schema_hash,
-        "data_hash": data_hash,
+        "row_estimate": row_estimate,
+        "shape_hash": shape_hash,
     }
 
 
 def get_db_fingerprint(conn) -> dict:
     """Fingerprint for every table in the database, keyed by table name."""
     table_names = get_table_names(conn)
-    return {name: compute_table_fingerprint(conn, name) for name in table_names}
+    foreign_keys = get_foreign_keys(conn)
+    return {
+        name: compute_table_fingerprint(conn, name, foreign_keys) for name in table_names
+    }
 
 
 def get_qdrant_fingerprint() -> dict:
@@ -85,14 +77,14 @@ def get_qdrant_fingerprint() -> dict:
     hiccup does not, and treating it as though it did used to turn a brief blip into a full
     rebuild, complete with a fresh model call for every table.
     """
-    if not qdrant.collection_exists(QDRANT_COLLECTION):
+    if not qdrant.collection_exists(QDRANT_COLLECTION_TABLES):
         return {}
 
     fingerprint = {}
     offset = None
     while True:
         points, offset = qdrant.scroll(
-            collection_name=QDRANT_COLLECTION,
+            collection_name=QDRANT_COLLECTION_TABLES,
             limit=100,
             offset=offset,
             with_payload=True,
@@ -120,11 +112,7 @@ def compare_fingerprints(db_fp: dict, qdrant_fp: dict) -> tuple[bool, list[str]]
             changed.append(table)  # Table dropped
         elif qdrant_entry is None:
             changed.append(table)  # New table
-        elif db_entry["schema_hash"] != qdrant_entry["schema_hash"]:
-            changed.append(table)  # Schema changed
-        elif db_entry["data_hash"] != qdrant_entry["data_hash"]:
-            changed.append(table)  # Data changed
-        elif db_entry["row_count"] != qdrant_entry["row_count"]:
-            changed.append(table)  # Row count changed
+        elif db_entry["shape_hash"] != qdrant_entry["shape_hash"]:
+            changed.append(table)  # Columns or foreign keys changed
 
     return len(changed) > 0, changed

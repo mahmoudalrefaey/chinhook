@@ -143,7 +143,6 @@ flowchart TB
     subgraph SERVICES["Connected services"]
         PG[("PostgreSQL")]
         QD[("Qdrant")]
-        OLLAMA["Ollama · embeddings"]
         AZURE["Azure OpenAI"]
     end
 
@@ -159,7 +158,7 @@ flowchart TB
     RETRIEVE --> PG
     GROUND --> PG
     EXECUTE --> PG
-    QD --> OLLAMA
+    RETRIEVE --> AZURE
     GENERATE --> AZURE
     UNDERSTAND --> AZURE
     ANSWER --> AZURE
@@ -197,11 +196,11 @@ The graph is compiled once per process. Conversation state is held by `ChatSessi
 <details>
 <summary><strong>Dynamic schema discovery and retrieval</strong></summary>
 
-- Reads table and column metadata from the live PostgreSQL catalog.
-- Builds a word index from table and column names.
-- Uses the full schema for small indexed collections (up to the configured threshold of 25 points); larger collections use Qdrant retrieval (`top_k=5`).
+- Every table is searched for, never assumed small enough to send whole: dense (embedding) and lexical (word overlap) search over the indexed tables are fused by reciprocal rank, the same way regardless of how many tables the database has.
+- Foreign keys are read from the catalog once, at index time, and the tables on the join path between whichever tables were actually retrieved are added automatically, so a question that never names a join table still gets one it needs.
+- A second index of real, low-cardinality column values (a country, a genre, a status) lets a question's own words ("Americans", "rock") be matched to what a column actually stores, by meaning rather than by exact substring.
 - Caches retrieved schema per chat session.
-- Enriches indexed table definitions with short evidence generated from sampled rows.
+- Enriches indexed table definitions with short evidence generated from sampled rows, with anything that looks like a person's contact details masked out first.
 
 </details>
 
@@ -226,7 +225,7 @@ The validation path checks that:
 3. Forbidden operations are rejected after string literals are stripped.
 4. Referenced tables exist in the live catalog.
 
-Execution re-validates the query, applies a `statement_timeout` of **3,000 ms**, and fetches at most **50 rows**. On errors, the shared connection is rolled back.
+Execution re-validates the query, applies a `statement_timeout` of **3,000 ms**, and fetches at most **500 rows**, flagging the result as truncated rather than reporting a partial count as the total. Postgres connections are pooled, so one question's transaction can never block another's.
 
 </details>
 
@@ -267,7 +266,7 @@ Each turn can include the route, task-level trace, workflow events, stage timing
 | LangGraph | Workflow orchestration |
 | PostgreSQL + `psycopg2` | Relational database |
 | Qdrant | Vector storage and schema retrieval |
-| Ollama + `nomic-embed-text` | Embeddings |
+| Azure OpenAI `text-embedding-3-small` | Embeddings |
 | Azure OpenAI | Understanding, SQL generation, grounding, and answer composition |
 | SQLGlot | SQL parsing and validation support |
 | Streamlit | Web interface |
@@ -283,8 +282,7 @@ Each turn can include the route, task-level trace, workflow events, stage timing
 - Python **3.12**
 - A reachable PostgreSQL database
 - A reachable Qdrant instance
-- Ollama serving `nomic-embed-text`
-- An Azure OpenAI resource with both configured deployments
+- An Azure OpenAI resource with both chat deployments and an embedding deployment configured
 - [uv](https://docs.astral.sh/uv/) installed
 
 ### 1. Get the project and configure the environment
@@ -341,8 +339,9 @@ uv run python scripts/indexer.py --full
 docker compose up
 ```
 
-Brings up Qdrant, Ollama, a one-shot job that pulls the embedding model and indexes the
-database, and the web interface itself, each in its own container. `DATABASE_URL` in `.env`
+Brings up Qdrant, a one-shot job that indexes the database, and the web interface itself,
+each in its own container; embeddings come from the Azure deployment named in `.env`, not a
+local model. `DATABASE_URL` in `.env`
 still points at wherever Postgres already lives. To also run a local Postgres, with the
 Chinook schema and the read-only role already set up, layer the local-db file on top instead:
 
@@ -365,7 +364,12 @@ The application loads environment values through `config.py`.
 | `DEPLOYMENT2_NAME` | Deployment name for deployment 2 |
 | `DATABASE_URL` | PostgreSQL connection string |
 | `QDRANT_URL` | Qdrant URL; defaults to `http://localhost:6333` |
-| `QDRANT_COLLECTION` | Collection name; defaults to `schema_tables` |
+| `QDRANT_COLLECTION_TABLES` | Table index collection name; defaults to `schema_tables` |
+| `QDRANT_COLLECTION_VALUES` | Value index collection name; defaults to `schema_values` |
+| `AZURE_EMBEDDING_KEY` | API key for the embedding deployment |
+| `AZURE_EMBEDDING_ENDPOINT` | Endpoint for the embedding deployment |
+| `EMBED_MODEL` | Embedding deployment name; defaults to `text-embedding-3-small` |
+| `EMBED_DIM` | Vector size the embedding deployment produces; defaults to `1536` |
 | `AUTO_INDEX_ON_STARTUP` | Whether the terminal CLI checks the index at startup; defaults to `true` |
 
 Additional implementation details:

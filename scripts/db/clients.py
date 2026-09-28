@@ -1,11 +1,11 @@
 """The clients the database tooling shares, and the pool that owns the Postgres connections.
 
-Ollama and Qdrant clients are created here but do not connect until first used, which is how
-the client libraries for both already behave. Postgres does not behave that way on its own,
-which is why it gets a pool instead of a bare connection: a pool is created lazily on first
-use rather than at import, connections are checked out for the duration of one operation and
-always returned, and a browser session's own thread never blocks another session's on a
-shared, half-finished transaction.
+Qdrant's client is created here but does not connect until first used, which is how the
+client library already behaves. Postgres does not behave that way on its own, which is why
+it gets a pool instead of a bare connection: a pool is created lazily on first use rather
+than at import, connections are checked out for the duration of one operation and always
+returned, and a browser session's own thread never blocks another session's on a shared,
+half-finished transaction.
 
 The pool connects with DATABASE_URL_RO, which points at a role with SELECT only wherever that
 role has been created (see docs/READ_ONLY_ROLE.md). Falling back to DATABASE_URL when no
@@ -17,13 +17,12 @@ layer has a gap.
 import atexit
 import threading
 
-import ollama
 from psycopg2 import pool as psycopg2_pool
 from qdrant_client import QdrantClient
 
-from config import DATABASE_URL, DATABASE_URL_RO, EMBED_MODEL, OLLAMA_HOST, QDRANT_URL
+import config
+from config import DATABASE_URL, DATABASE_URL_RO, QDRANT_URL
 
-ollama_client = ollama.Client(host=OLLAMA_HOST)
 qdrant = QdrantClient(url=QDRANT_URL)
 
 _pool_lock = threading.Lock()
@@ -101,5 +100,20 @@ def get_connection():
 
 
 def embed(text: str) -> list[float]:
-    resp = ollama_client.embeddings(model=EMBED_MODEL, prompt=text)
-    return resp["embedding"]
+    return embed_batch([text])[0]
+
+
+def embed_batch(texts: list[str]) -> list[list[float]]:
+    """Embeddings for several texts in one Azure OpenAI call.
+
+    Used at index time, where a table's description and dozens or hundreds of a column's
+    distinct values all need embedding: one round trip for the whole batch rather than one
+    per text is what keeps indexing a large schema from being dominated by network latency.
+    A single query at ask time is just a batch of one.
+    """
+    if not texts:
+        return []
+    client = config.create_embedding_client()
+    response = client.embeddings.create(input=texts, model=config.EMBED_MODEL)
+    by_index = {item.index: item.embedding for item in response.data}
+    return [by_index[i] for i in range(len(texts))]

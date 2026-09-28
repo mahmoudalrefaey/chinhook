@@ -38,12 +38,20 @@ DATABASE_URL_RO = os.getenv("DATABASE_URL_RO") or DATABASE_URL
 
 # ---------- Qdrant ----------
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "schema_tables")
+# One collection per kind of thing being searched: a table's own definition, and a real
+# value one of its columns holds. Kept apart because a question is answered by finding both
+# at once through different searches, not by ranking them against each other in one list.
+QDRANT_COLLECTION_TABLES = os.getenv("QDRANT_COLLECTION_TABLES", "schema_tables")
+QDRANT_COLLECTION_VALUES = os.getenv("QDRANT_COLLECTION_VALUES", "schema_values")
 
 # ---------- Embedding ----------
-EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
-EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+# An Azure OpenAI embedding deployment, usually its own resource rather than the chat
+# deployments above, so it is configured on its own rather than assumed to share their key
+# or endpoint.
+AZURE_EMBEDDING_KEY = os.getenv("AZURE_EMBEDDING_KEY")
+AZURE_EMBEDDING_ENDPOINT = os.getenv("AZURE_EMBEDDING_ENDPOINT")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+EMBED_DIM = int(os.getenv("EMBED_DIM", "1536"))
 
 # ---------- Indexing ----------
 # Read only by the terminal CLI, which is the one entry point that can index as part of its
@@ -93,6 +101,25 @@ def create_azure_client(model_name: str):
     return client
 
 
+def create_embedding_client():
+    """The Azure OpenAI client for the embedding deployment, built once and reused.
+
+    A separate cache slot from create_azure_client's, since this deployment usually lives on
+    its own resource with its own key rather than sharing either with the chat deployments.
+    """
+    from openai import AzureOpenAI
+
+    client = _azure_clients.get(AZURE_EMBEDDING_ENDPOINT)
+    if client is None:
+        client = AzureOpenAI(
+            api_key=AZURE_EMBEDDING_KEY,
+            api_version=AZURE_API_VERSION,
+            azure_endpoint=AZURE_EMBEDDING_ENDPOINT,
+        )
+        _azure_clients[AZURE_EMBEDDING_ENDPOINT] = client
+    return client
+
+
 def validate_config() -> tuple[bool, list[str]]:
     """Check that every deployment the app actually uses is configured.
 
@@ -105,6 +132,10 @@ def validate_config() -> tuple[bool, list[str]]:
         missing.append("AZURE_OPENAI_KEY")
     if not DATABASE_URL:
         missing.append("DATABASE_URL")
+    if not AZURE_EMBEDDING_KEY:
+        missing.append("AZURE_EMBEDDING_KEY")
+    if not AZURE_EMBEDDING_ENDPOINT:
+        missing.append("AZURE_EMBEDDING_ENDPOINT")
 
     env_names = {
         "gpt-4.1-nano": ("DEPLOYMENT1_NAME", "AZURE_OPENAI_ENDPOINT1"),

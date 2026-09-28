@@ -1,6 +1,7 @@
-# The web interface only. Qdrant, Ollama and Postgres are separate services (see
-# docker-compose.yml), reached over the network by URL, the same way a hosted deployment
-# reaches them; nothing about this image is specific to any one of them.
+# The web interface only. Qdrant and Postgres are separate services (see docker-compose.yml),
+# reached over the network by URL, the same way a hosted deployment reaches them; nothing
+# about this image is specific to either of them. Embeddings come from an Azure OpenAI
+# deployment, so there is no local embedding model or service to bring up here either.
 
 FROM python:3.12-slim
 

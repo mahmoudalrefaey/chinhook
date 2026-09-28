@@ -78,8 +78,8 @@ except Exception as exc:  # noqa: BLE001
     st.markdown(
         '<div class="notice"><strong>Cannot reach the backing services.</strong><br>'
         f"{_html.escape(f'{type(exc).__name__}: {exc}')}<br><br>"
-        "Check that the Postgres and Qdrant containers are running, that Ollama is up, "
-        "and that the values in <code>.env</code> are filled in.</div>",
+        "Check that the Postgres and Qdrant containers are running, and that the values in "
+        "<code>.env</code> are filled in.</div>",
         unsafe_allow_html=True,
     )
     st.stop()
