@@ -46,12 +46,9 @@ EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 # ---------- Indexing ----------
-try:
-    INDEX_CHECK_INTERVAL = int(os.getenv("INDEX_CHECK_INTERVAL", "300"))
-except ValueError:
-    # A value that will not parse should not take the whole app down at import time over a
-    # setting nothing else treats as critical.
-    INDEX_CHECK_INTERVAL = 300
+# Read only by the terminal CLI, which is the one entry point that can index as part of its
+# own startup. The web app never does: the index is built by the indexer service (or the
+# sidebar's "Rebuild index" button), never as a side effect of a browser tab loading the page.
 AUTO_INDEX_ON_STARTUP = os.getenv("AUTO_INDEX_ON_STARTUP", "true").lower() == "true"
 
 # ---------- Auth and rate limiting ----------

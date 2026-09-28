@@ -1,0 +1,79 @@
+# Each service on its own, reached by URL through the same environment variables a hosted
+# deployment would set. Nothing here is nested inside another service's container.
+#
+# DATABASE_URL in .env is expected to point at wherever Postgres already lives. To also run a
+# local Postgres for development, with the Chinook schema and read-only role already set up,
+# layer docker-compose.local-db.yml on top:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local-db.yml up
+#
+# That file is what points DATABASE_URL at the local database instead: a plain profile is not
+# enough for this, since the app and indexer containers reach Postgres over the compose
+# network by service name ("postgres"), not by "localhost", which is what .env's DATABASE_URL
+# says for every other way of running this project.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  # Pulls the embedding model once and exits. The app and the indexer both wait on this
+  # rather than on ollama itself, since ollama being up says nothing about whether the model
+  # it is being asked for has actually been downloaded yet.
+  ollama-pull:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      - ollama
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        until ollama list > /dev/null 2>&1; do sleep 1; done
+        ollama pull "${EMBED_MODEL:-nomic-embed-text}"
+
+  # Builds or refreshes the schema index and exits. The app never indexes on its own startup;
+  # this is the one place that writes the index, whether run here, from the "Rebuild index"
+  # button in the sidebar, or as `index` from the terminal CLI.
+  indexer:
+    build: .
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      qdrant:
+        condition: service_started
+      ollama-pull:
+        condition: service_completed_successfully
+    command: ["/app/.venv/bin/python", "-m", "scripts.indexer", "--check"]
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_HOST: http://ollama:11434
+    ports:
+      - "${PORT:-8501}:8501"
+    depends_on:
+      qdrant:
+        condition: service_started
+      ollama-pull:
+        condition: service_completed_successfully
+      indexer:
+        condition: service_completed_successfully
+
+volumes:
+  qdrant-data:
+  ollama-data:

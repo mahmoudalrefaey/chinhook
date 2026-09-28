@@ -338,11 +338,17 @@ uv run python scripts/indexer.py --full
 ### 6. Run with Docker
 
 ```bash
-docker build -t chinhook .
-docker run -p 8501:8501 --env-file .env chinhook
+docker compose up
 ```
 
-The container starts the web interface and a co-located Ollama service. PostgreSQL and Qdrant are expected to be reachable separately.
+Brings up Qdrant, Ollama, a one-shot job that pulls the embedding model and indexes the
+database, and the web interface itself, each in its own container. `DATABASE_URL` in `.env`
+still points at wherever Postgres already lives. To also run a local Postgres, with the
+Chinook schema and the read-only role already set up, layer the local-db file on top instead:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local-db.yml up
+```
 
 ---
 
@@ -360,8 +366,7 @@ The application loads environment values through `config.py`.
 | `DATABASE_URL` | PostgreSQL connection string |
 | `QDRANT_URL` | Qdrant URL; defaults to `http://localhost:6333` |
 | `QDRANT_COLLECTION` | Collection name; defaults to `schema_tables` |
-| `AUTO_INDEX_ON_STARTUP` | Whether the CLI checks the index at startup; defaults to `true` |
-| `INDEX_CHECK_INTERVAL` | Parsed configuration value; currently no scheduler consumes it |
+| `AUTO_INDEX_ON_STARTUP` | Whether the terminal CLI checks the index at startup; defaults to `true` |
 
 Additional implementation details:
 
@@ -477,7 +482,6 @@ chinhook/
 - **No authentication or rate limiting** is implemented in the described application. Streamlit session state provides the chat-session boundary.
 - **No write operations** are exposed through the SQL tool.
 - `chat_engine.compare()` runs model comparisons sequentially.
-- `INDEX_CHECK_INTERVAL` is loaded but has no active scheduler consumer.
 - `validate_config()` has a known mismatch: it checks the mini deployment but reports the nano deployment's environment-variable names when configuration is missing.
 - The `.env` file is local configuration and should not be committed. Supply the required API key, database URL, and deployment settings securely.
 

@@ -1,0 +1,45 @@
+# Adds a local Postgres, with the Chinook schema and the read-only role already set up, and
+# points the app and indexer containers at it instead of whatever DATABASE_URL in .env says.
+# Layer this on top of docker-compose.yml rather than running it alone:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local-db.yml up
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      # Left at the image's own default ("postgres"), not "chinook": the entrypoint connects
+      # the init scripts to whichever database this names, and the vendor schema script
+      # below opens by dropping and recreating a database called chinook, which fails the
+      # moment it is asked to drop the very database it is connected to.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      CHINOOK_RO_PASSWORD: ${CHINOOK_RO_PASSWORD:?set CHINOOK_RO_PASSWORD in .env}
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./docker/postgres-initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chinook"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  indexer:
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/chinook
+      DATABASE_URL_RO: postgresql://chinhook_ro:${CHINOOK_RO_PASSWORD}@postgres:5432/chinook
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/chinook
+      DATABASE_URL_RO: postgresql://chinhook_ro:${CHINOOK_RO_PASSWORD}@postgres:5432/chinook
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pg-data:
