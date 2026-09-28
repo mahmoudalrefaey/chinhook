@@ -99,6 +99,20 @@ def get_connection():
     return _CheckedOutConnection()
 
 
+def get_maintenance_connection():
+    """A plain, unpooled connection using DATABASE_URL rather than the read-only pool.
+
+    For the one kind of thing indexing needs that a SELECT-only role cannot do: ANALYZE,
+    which Postgres treats as a write against its own catalogs (it updates pg_class.reltuples
+    and pg_statistic) and refuses to run under a read-only role, the same way it refuses an
+    INSERT. Not pooled, because indexing runs rarely, never concurrently with itself, and
+    closes this connection as soon as it is done with it.
+    """
+    import psycopg2
+
+    return psycopg2.connect(DATABASE_URL)
+
+
 def embed(text: str) -> list[float]:
     return embed_batch([text])[0]
 

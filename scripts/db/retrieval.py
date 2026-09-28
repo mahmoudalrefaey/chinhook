@@ -325,3 +325,53 @@ def all_schema_text() -> str:
     nothing held back.
     """
     return "\n".join(point.payload.get("table_def", "") for point in _all_table_points())
+
+
+def list_indexed_tables() -> list[dict]:
+    """Every table currently indexed, with its full definition, evidence, join neighbours
+    and fingerprint exactly as retrieval sees them.
+
+    A diagnostic read, not something a prompt is built from: the point of this one is to show
+    what the index actually holds right now, including a table description that has gone
+    stale because the data changed since the last reindex, which retrieve_tables above has no
+    reason to ever expose on its own.
+    """
+    return [
+        {
+            "table": _table_name(point),
+            "table_def": point.payload.get("table_def", ""),
+            "fk_neighbours": sorted(point.payload.get("fk_neighbours") or []),
+            "fingerprint": point.payload.get("fingerprint") or {},
+        }
+        for point in _all_table_points()
+    ]
+
+
+def list_indexed_values() -> list[dict]:
+    """Every (table, column, value) point currently indexed for value search.
+
+    The other half of the same diagnostic: list_indexed_tables shows what a question's table
+    search sees, this shows what its value search sees, both read directly from the index
+    rather than through a search over it.
+    """
+    if not qdrant.collection_exists(QDRANT_COLLECTION_VALUES):
+        return []
+    values: list[dict] = []
+    offset = None
+    while True:
+        points, offset = qdrant.scroll(
+            collection_name=QDRANT_COLLECTION_VALUES,
+            limit=200,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        for point in points:
+            values.append({
+                "table": point.payload.get("table"),
+                "column": point.payload.get("column"),
+                "value": point.payload.get("value"),
+            })
+        if offset is None:
+            break
+    return values

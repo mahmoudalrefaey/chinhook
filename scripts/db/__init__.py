@@ -34,6 +34,8 @@ from scripts.db.retrieval import (
     expand_with_joins,
     get_relevant_schema,
     join_graph,
+    list_indexed_tables,
+    list_indexed_values,
     retrieve_tables,
     search_values,
 )
@@ -61,6 +63,8 @@ __all__ = [
     "get_table_names",
     "incremental_reindex",
     "join_graph",
+    "list_indexed_tables",
+    "list_indexed_values",
     "low_cardinality_values",
     "qdrant",
     "retrieve_tables",

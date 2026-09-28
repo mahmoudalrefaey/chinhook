@@ -598,6 +598,20 @@ h1, h2, h3, h4 {
 
 .pill-ok { background: #E9F6EC; color: #1B7F35; }
 .pill-warn { background: var(--brand-wash); color: var(--brand); }
+.pill-tag {
+    background: var(--surface-alt);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    font-weight: 500;
+}
+
+.tag-group { margin-bottom: 0.7rem; }
+.tag-group-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+}
+.tag-wrap { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 
 /* ---------- Comparison ---------- */
 

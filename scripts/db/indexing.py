@@ -12,7 +12,7 @@ from qdrant_client.models import (
 )
 
 from config import EMBED_DIM, QDRANT_COLLECTION_TABLES, QDRANT_COLLECTION_VALUES
-from scripts.db.clients import embed_batch, get_connection, qdrant
+from scripts.db.clients import embed_batch, get_connection, get_maintenance_connection, qdrant
 from scripts.db.evidence import generate_evidence, get_sample_rows
 from scripts.db.fingerprinting import (
     compare_fingerprints,
@@ -205,14 +205,38 @@ def _prune_stale_tables(valid_table_names: set[str]) -> int:
     return len(stale_ids)
 
 
+def _analyze_tables(table_names) -> None:
+    """Bring pg_class.reltuples up to date for these tables before their fingerprint is read.
+
+    A table Postgres has never analysed, typically one freshly bulk-loaded, reports -1 there
+    rather than its real row count, which is what made a table's indexed row estimate show 0
+    regardless of how much data it actually held. ANALYZE is Postgres's own bounded-sampling
+    statistics pass, not a full scan, so this costs the same whether the table holds a
+    thousand rows or a hundred million; it needs a connection that can write to the database's
+    own catalogs, which the read-only role indexing otherwise uses is not granted.
+    """
+    if not table_names:
+        return
+    conn = get_maintenance_connection()
+    try:
+        with conn.cursor() as cur:
+            for table_name in table_names:
+                cur.execute(f'ANALYZE "{table_name}"')
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def full_reindex():
     """Full re-index of every table, and removal of anything indexed that no longer exists."""
     ensure_collections()
     with get_connection() as conn:
         table_defs = get_table_defs(conn)
-        fingerprints = get_db_fingerprint(conn)
         table_names = {_table_name_from_def(td) for td in table_defs}
+    _analyze_tables(table_names)
 
+    with get_connection() as conn:
+        fingerprints = get_db_fingerprint(conn)
         indexed = _index_tables(conn, table_defs, fingerprints)
         _index_values(conn, sorted(table_names))
 
@@ -226,12 +250,15 @@ def incremental_reindex(changed_tables: list[str]):
     ensure_collections()
     with get_connection() as conn:
         table_defs = get_table_defs(conn)
-        fingerprints = get_db_fingerprint(conn)
         defs_by_table = {_table_name_from_def(td): td for td in table_defs}
 
         still_here = [t for t in changed_tables if t in defs_by_table]
         dropped = [t for t in changed_tables if t not in defs_by_table]
 
+    _analyze_tables(still_here)
+
+    with get_connection() as conn:
+        fingerprints = get_db_fingerprint(conn)
         indexed = _index_tables(conn, [defs_by_table[t] for t in still_here], fingerprints)
         _index_values(conn, still_here)
 

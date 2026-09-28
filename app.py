@@ -140,6 +140,20 @@ def cached_schema():
     return chat_engine.schema_overview()
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def cached_indexed_tables():
+    from scripts.db_module import list_indexed_tables
+
+    return list_indexed_tables()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def cached_indexed_values():
+    from scripts.db_module import list_indexed_values
+
+    return list_indexed_values()
+
+
 def render_chart(frame):
     """Draw a bar chart when the shape of the result makes one meaningful."""
     if frame is None or not 2 <= len(frame) <= 30:
@@ -463,7 +477,7 @@ banner = ROOT / "assets/banner.png"
 if banner.exists():
     st.image(str(banner), width="stretch")
 
-chat_tab, compare_tab, schema_tab = st.tabs(["Chat", "Compare models", "Schema"])
+chat_tab, compare_tab, schema_tab, index_tab = st.tabs(["Chat", "Compare models", "Schema", "Index"])
 
 
 # ---------- chat ----------
@@ -689,6 +703,96 @@ with schema_tab:
     except Exception as exc:  # noqa: BLE001
         st.markdown(
             f'<div class="notice"><strong>Could not read the schema.</strong><br>'
+            f"{escape_text(f'{type(exc).__name__}: {exc}')}</div>",
+            unsafe_allow_html=True,
+        )
+
+
+# ---------- vector index ----------
+
+with index_tab:
+    st.markdown('<div class="page-title">What is actually indexed</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">Read straight from Qdrant, not from the database: this '
+        "is what a question's retrieval actually sees, table definitions and real values "
+        "alike. It can differ from the Schema tab when the database has changed since the "
+        "last reindex.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+
+    try:
+        indexed_tables = cached_indexed_tables()
+        indexed_values = cached_indexed_values()
+
+        totals = st.columns(2)
+        figures = [
+            ("Tables indexed", f"{len(indexed_tables)}"),
+            ("Values indexed", f"{len(indexed_values)}"),
+        ]
+        for column, (label, value) in zip(totals, figures, strict=True):
+            column.markdown(
+                f'<div class="figure"><div class="figure-value">{value}</div>'
+                f'<div class="figure-label">{label}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        values_by_table: dict[str, dict[str, list[str]]] = {}
+        for entry in indexed_values:
+            table = entry.get("table") or ""
+            column = entry.get("column") or ""
+            values_by_table.setdefault(table, {}).setdefault(column, []).append(str(entry.get("value")))
+
+        MAX_TAGS_SHOWN = 60
+
+        st.markdown('<div class="panel-label">Tables</div>', unsafe_allow_html=True)
+        for table in sorted(indexed_tables, key=lambda t: t["table"]):
+            name = table["table"]
+            with st.expander(name):
+                st.markdown(
+                    '<div class="panel-label">Definition, as embedded</div>', unsafe_allow_html=True
+                )
+                st.code(table["table_def"], language="text")
+
+                fingerprint = table.get("fingerprint") or {}
+                stats = []
+                if table["fk_neighbours"]:
+                    stats.append(("Joined to", ", ".join(table["fk_neighbours"])))
+                if fingerprint:
+                    row_estimate = fingerprint.get("row_estimate", "?")
+                    row_estimate_text = f"{row_estimate:,}" if isinstance(row_estimate, int) else str(row_estimate)
+                    stats.append(("Row estimate", row_estimate_text))
+                    stats.append(("Shape hash", str(fingerprint.get("shape_hash", "?"))))
+                for label, value in stats:
+                    st.markdown(
+                        f'<div class="stat"><span class="stat-label">{escape_text(label)}</span>'
+                        f'<span class="stat-value">{escape_text(value)}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                table_values = values_by_table.get(name)
+                if table_values:
+                    st.markdown(
+                        '<div class="panel-label">Indexed values</div>', unsafe_allow_html=True
+                    )
+                    for column, values in sorted(table_values.items()):
+                        shown = sorted(values)[:MAX_TAGS_SHOWN]
+                        tags = "".join(
+                            f'<span class="pill pill-tag">{escape_text(v)}</span>' for v in shown
+                        )
+                        more = len(values) - len(shown)
+                        if more > 0:
+                            tags += f'<span class="pill pill-tag">+{more} more</span>'
+                        st.markdown(
+                            f'<div class="tag-group">'
+                            f'<div class="tag-group-label">{escape_text(column)} ({len(values)})</div>'
+                            f'<div class="tag-wrap">{tags}</div>'
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+    except Exception as exc:  # noqa: BLE001
+        st.markdown(
+            f'<div class="notice"><strong>Could not read the index.</strong><br>'
             f"{escape_text(f'{type(exc).__name__}: {exc}')}</div>",
             unsafe_allow_html=True,
         )
