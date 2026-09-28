@@ -317,7 +317,8 @@ def render_trace(result):
             st.markdown(
                 f'<div class="stat"><span class="stat-label">{escape_text(task.get("task_id"))} &middot; '
                 f'{escape_text(task.get("intent"))}</span>'
-                f'<span class="stat-value">{task.get("row_count", 0)} rows</span></div>'
+                f'<span class="stat-value">{task.get("row_count", 0)} rows'
+                f'{"+" if task.get("truncated") else ""}</span></div>'
                 f'<div class="timing">{escape_text(task.get("question", ""))} &middot; '
                 f'{escape_text(task.get("status"))} {pill}</div>'
                 f'<div class="timing">Tables: {escape_text(tables)}{reuse}</div>',

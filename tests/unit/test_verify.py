@@ -12,6 +12,17 @@ def test_parse_limit_from_question():
     assert v.parse_limit_from_question("limit to 3 rows") == 3
 
 
+def test_parse_limit_from_question_covers_every_number_word_the_regex_accepts():
+    # The regex used to accept four/six/seven/eight/nine but the lookup dict did not have
+    # them, so "top four artists" raised a KeyError and took the whole turn down with it.
+    words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+        "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    }
+    for word, number in words.items():
+        assert v.parse_limit_from_question(f"top {word} artists") == number
+
+
 def test_question_expects_count():
     assert v.question_expects_count("How many customers are from the USA?") is True
     assert v.question_expects_count("total number of invoices") is True

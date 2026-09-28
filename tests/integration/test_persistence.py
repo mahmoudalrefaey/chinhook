@@ -23,7 +23,7 @@ def temp_session_id():
 
     import config
 
-    conn = psycopg2.connect(config.DATABASE_URL, sslmode="require")
+    conn = psycopg2.connect(config.DATABASE_URL)
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM chat_sessions WHERE session_id = %s", (session_id,))

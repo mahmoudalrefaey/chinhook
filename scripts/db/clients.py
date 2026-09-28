@@ -36,7 +36,11 @@ def _create_pool():
         raise RuntimeError(
             "DATABASE_URL is not set. Nothing that talks to Postgres can run without it."
         )
-    return psycopg2_pool.ThreadedConnectionPool(1, 10, dsn, sslmode="require")
+    # SSL mode is whatever the URL itself says (sslmode=require for a hosted database,
+    # sslmode=disable for a local one such as the CI Postgres service). Forcing "require"
+    # here used to override that and refuse to connect to any database that does not speak
+    # TLS, local development and CI included.
+    return psycopg2_pool.ThreadedConnectionPool(1, 10, dsn)
 
 
 def _get_pool():

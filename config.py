@@ -1,4 +1,6 @@
 import os
+from typing import Any
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,8 +41,8 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "schema_tables")
 
 # ---------- Embedding ----------
-EMBED_MODEL = "nomic-embed-text"
-EMBED_DIM = 768
+EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
+EMBED_DIM = int(os.getenv("EMBED_DIM", "768"))
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 # ---------- Indexing ----------
@@ -70,16 +72,28 @@ def get_model_config(model_name: str) -> dict:
     return MODEL_CONFIGS.get(model_name, MODEL_CONFIGS[DEFAULT_MODEL])
 
 
+_azure_clients: dict[str, Any] = {}
+
+
 def create_azure_client(model_name: str):
-    """Create Azure OpenAI client for the given model."""
+    """The Azure OpenAI client for the given model, one per deployment for the life of the process.
+
+    A client holds its own connection pool, so building a fresh one on every call meant every
+    model call paid for a new TLS handshake it did not need; deployments are fixed for the
+    life of the process, so nothing about reusing one across calls can go stale.
+    """
     from openai import AzureOpenAI
 
     cfg = get_model_config(model_name)
-    return AzureOpenAI(
-        api_key=AZURE_OPENAI_KEY,
-        api_version=AZURE_API_VERSION,
-        azure_endpoint=cfg["endpoint"],
-    )
+    client = _azure_clients.get(cfg["endpoint"])
+    if client is None:
+        client = AzureOpenAI(
+            api_key=AZURE_OPENAI_KEY,
+            api_version=AZURE_API_VERSION,
+            azure_endpoint=cfg["endpoint"],
+        )
+        _azure_clients[cfg["endpoint"]] = client
+    return client
 
 
 def validate_config() -> tuple[bool, list[str]]:

@@ -19,10 +19,13 @@ def node_execute(state: GraphState) -> dict:
         task.columns = list(result.get("columns") or [])
         task.rows = list(rows)
         task.row_count = len(rows)
+        task.truncated = bool(result.get("truncated"))
         task.execution_status = "ok"
         task.status = "executed"
         task.error = None
         detail = f"{task.task_id}: {task.row_count} row(s)"
+        if task.truncated:
+            detail += " (truncated)"
         trace = _trace(state, "execute", "ran", detail=detail, task=task.task_id, rows=task.row_count)
         return {"phase": "executed", "trace": trace, "needs_restart": False}
 

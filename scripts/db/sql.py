@@ -58,7 +58,11 @@ def validate_sql(query: str) -> tuple[bool, str]:
         return False, "only a single statement is allowed"
 
     statement = statements[0]
-    if statement.key != "select":
+    # UNION, INTERSECT and EXCEPT combine two SELECTs into one read-only result set, so they
+    # are allowed at the top level alongside a plain SELECT. Anything written or mutating
+    # inside either branch, including inside a CTE either one draws from, is still caught
+    # below: the walk covers the whole tree, not just this top node.
+    if statement.key not in {"select", "union", "intersect", "except"}:
         return False, "only SELECT queries are allowed"
 
     for node in statement.walk():

@@ -29,7 +29,10 @@ def parse_limit_from_question(question: str) -> Optional[int]:
     """A row limit stated in plain language, e.g. 'top 5' -> 5."""
     if not question:
         return None
-    words = {"one": 1, "two": 2, "three": 3, "five": 5, "ten": 10, "twenty": 20, "fifty": 50}
+    words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+        "eight": 8, "nine": 9, "ten": 10, "twenty": 20, "fifty": 50,
+    }
     match = re.search(
         r"\b(?:top|first|best|most)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twenty|fifty)\b",
         question.lower(),

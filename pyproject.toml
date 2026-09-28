@@ -17,7 +17,6 @@ dependencies = [
     "psycopg2-binary>=2.9.13",
     "python-dotenv>=1.2.3",
     "qdrant-client>=1.19.1",
-    "sqlalchemy>=2.0.54",
     "sqlglot>=30.19.0",
     # app.py is the web interface and imports this, and the Dockerfile installs the
     # environment with "uv sync --frozen", so it has to be declared here or the deployed

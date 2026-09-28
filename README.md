@@ -366,9 +366,8 @@ The application loads environment values through `config.py`.
 Additional implementation details:
 
 - The configured model identifiers are hardcoded in `config.py` as `gpt-4.1-nano` and `gpt-4.1-mini`.
-- `MODEL1_NAME` and `MODEL2_NAME` appear in `.env.example` but are not read by the current configuration module.
-- `OLLAMA_HOST` and the embedding model/dimension are defined in code rather than read from environment variables.
-- PostgreSQL connections use `sslmode="require"`.
+- `MODEL1_NAME` and `MODEL2_NAME` appear in `.env.example` but are not read anywhere that affects behaviour.
+- PostgreSQL's SSL mode comes from `DATABASE_URL` itself, so a local or CI database without TLS connects normally.
 
 ---
 

@@ -18,7 +18,7 @@ pytestmark = pytest.mark.integration
 def _ro_connection():
     import psycopg2
 
-    return psycopg2.connect(config.DATABASE_URL_RO, sslmode="require")
+    return psycopg2.connect(config.DATABASE_URL_RO)
 
 
 @pytest.mark.skipif(

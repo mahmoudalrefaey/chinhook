@@ -24,6 +24,9 @@ DISALLOWED = [
     ("setval", "SELECT setval('artist_artist_id_seq', 1)"),
     ("nextval", "SELECT nextval('artist_artist_id_seq')"),
     ("stacked statements", 'SELECT 1; DROP TABLE artist'),
+    ("CTE with DELETE unioned onto a plain select",
+     "WITH x AS (DELETE FROM artist WHERE artist_id=-999 RETURNING *) "
+     "SELECT * FROM x UNION SELECT 1"),
     ("bare delete", 'DELETE FROM artist'),
     ("bare drop", 'DROP TABLE artist'),
     ("empty string", ''),
@@ -39,6 +42,9 @@ ALLOWED = [
     ("subquery", 'SELECT COUNT(*) FROM (SELECT DISTINCT customer_id FROM invoice) s'),
     ("column merely named like a function",
      'SELECT count AS pg_sleep FROM (SELECT 1 AS count) s'),
+    ("union of two selects", 'SELECT name FROM artist UNION SELECT name FROM genre'),
+    ("intersect", 'SELECT track_id FROM track INTERSECT SELECT track_id FROM invoice_line'),
+    ("except", 'SELECT track_id FROM track EXCEPT SELECT track_id FROM invoice_line'),
 ]
 
 

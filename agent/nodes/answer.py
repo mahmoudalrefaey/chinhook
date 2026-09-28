@@ -100,6 +100,9 @@ def _format_result(task: TaskState) -> str:
     lines.append("| " + " | ".join("---" for _ in task.columns) + " |")
     for row in task.rows:
         lines.append("| " + " | ".join(_cell(cell) for cell in row) + " |")
+    if task.truncated:
+        lines.append("")
+        lines.append(f"*More than {task.row_count} rows matched; only the first {task.row_count} are shown.*")
     return "\n".join(lines)
 
 
@@ -249,6 +252,12 @@ def node_answer(state: GraphState) -> dict:
             ]
         if task.verification_notes:
             payload["note"] = task.verification_notes
+        if task.truncated:
+            payload["truncated"] = (
+                f"more than {task.row_count} rows matched; only the first "
+                f"{task.row_count} are shown. Say so plainly rather than stating this as "
+                "the total."
+            )
         blocks.append(f"Verified result {index}:\n{json.dumps(payload, ensure_ascii=False, default=str)}")
     for task in needs_clarification:
         blocks.append(

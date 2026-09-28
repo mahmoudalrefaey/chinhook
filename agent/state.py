@@ -217,6 +217,7 @@ class TaskState:
     columns: list[str] = field(default_factory=list)
     rows: list[tuple] = field(default_factory=list)
     row_count: int = 0
+    truncated: bool = False               # the query matched more rows than were returned
     sql_limit: Optional[int] = None       # LIMIT as parsed out of the generated SQL
 
     status: TaskStatus = "pending"
@@ -251,6 +252,7 @@ class TaskState:
             "sql": self.sql,
             "sql_repaired": self.sql_repaired,
             "row_count": self.row_count,
+            "truncated": self.truncated,
             "status": self.status,
             "execution_status": self.execution_status,
             "verification": self.verification,

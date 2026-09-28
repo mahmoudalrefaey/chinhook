@@ -37,7 +37,9 @@ _ensured = False
 
 
 def _connection():
-    return psycopg2.connect(config.DATABASE_URL, sslmode="require")
+    # SSL mode comes from the URL itself, the same as the pooled read path, so a local or CI
+    # database without TLS is not refused by a mode forced on here.
+    return psycopg2.connect(config.DATABASE_URL)
 
 
 def _ensure_table() -> None:
