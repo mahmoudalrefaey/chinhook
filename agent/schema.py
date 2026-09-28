@@ -20,8 +20,10 @@ from agent.state import SchemaCache, split_schema
 from scripts.db.introspection import _INTERNAL_TABLES
 
 _catalog_cache: Optional[dict[str, list[tuple[str, str]]]] = None
+_catalog_cached_at: float = 0.0
 _catalog_last_failure: float = 0.0
 _CATALOG_RETRY_COOLDOWN_SECONDS = 5.0
+_CATALOG_TTL_SECONDS = 300.0
 _index_cache: Optional[dict[str, str]] = None
 
 
@@ -34,7 +36,7 @@ def table_names() -> list[str]:
 
 
 def catalog() -> dict[str, list[tuple[str, str]]]:
-    """Table name -> [(column, type)], introspected and cached for the life of the process.
+    """Table name -> [(column, type)], introspected and cached for a few minutes at a time.
 
     The query understanding node is given this so it can ground an entity against real
     columns instead of guessing at them. It is cheap, deterministic, and never invented. A
@@ -45,12 +47,17 @@ def catalog() -> dict[str, list[tuple[str, str]]]:
     A failure is remembered only for a short cooldown, not forever. One outage used to set a
     flag with no way back, and once it was set every question for the rest of that process
     was told the database had no tables at all, whether or not the outage had already passed.
+
+    The result itself expires after a few minutes rather than living for the process's whole
+    life: a table added, dropped or renamed outside this process (a migration, a restore)
+    used to be invisible to every question until the app restarted, silently rejecting valid
+    queries against tables that really exist.
     """
-    global _catalog_cache, _catalog_last_failure
-    if _catalog_cache is not None:
+    global _catalog_cache, _catalog_cached_at, _catalog_last_failure, _index_cache
+    if _catalog_cache is not None and (time.monotonic() - _catalog_cached_at) < _CATALOG_TTL_SECONDS:
         return _catalog_cache
     if _catalog_last_failure and (time.monotonic() - _catalog_last_failure) < _CATALOG_RETRY_COOLDOWN_SECONDS:
-        return {}
+        return _catalog_cache or {}
 
     from scripts.db_module import get_connection
 
@@ -73,8 +80,10 @@ def catalog() -> dict[str, list[tuple[str, str]]]:
     except Exception as exc:  # noqa: BLE001
         _catalog_last_failure = time.monotonic()
         print(f"Schema catalog unavailable for this request: {type(exc).__name__}: {exc}")
-        return {}
+        return _catalog_cache or {}
     _catalog_cache = tables
+    _catalog_cached_at = time.monotonic()
+    _index_cache = None
     return tables
 
 
