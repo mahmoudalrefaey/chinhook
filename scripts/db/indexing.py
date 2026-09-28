@@ -48,12 +48,27 @@ def _upsert_all(collection: str, points: list[PointStruct]) -> None:
 
 
 def ensure_collections():
-    """Create both Qdrant collections if they do not exist yet."""
+    """Create both Qdrant collections if they do not exist yet, at the configured vector size.
+
+    A collection that already exists but was built for a different embedding model, such as
+    one indexed before EMBED_MODEL or EMBED_DIM changed, is dropped and recreated rather than
+    left as a silent mismatch: Qdrant rejects every vector the new model produces against the
+    old size, which otherwise turns "the embedding deployment changed" into every upsert in
+    the next reindex failing with no clue why.
+    """
     for name in (QDRANT_COLLECTION_TABLES, QDRANT_COLLECTION_VALUES):
-        if not qdrant.collection_exists(name):
-            qdrant.create_collection(
-                name, vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE)
+        if qdrant.collection_exists(name):
+            current_size = qdrant.get_collection(name).config.params.vectors.size
+            if current_size == EMBED_DIM:
+                continue
+            print(
+                f'Collection "{name}" holds {current_size}-dimensional vectors but the '
+                f"configured embedding produces {EMBED_DIM}; recreating it."
             )
+            qdrant.delete_collection(name)
+        qdrant.create_collection(
+            name, vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE)
+        )
 
 
 def stable_point_id(*parts: str) -> int:
@@ -236,6 +251,20 @@ def _prune_stale_values(table_names: list[str]) -> None:
         qdrant.delete(QDRANT_COLLECTION_VALUES, stale_ids)
 
 
+def _embedding_config_changed() -> bool:
+    """Whether an already-indexed collection was built for a different embedding model.
+
+    Checked separately from the schema fingerprint, which only ever reflects the database's
+    own shape: the database can be completely unchanged while EMBED_MODEL or EMBED_DIM is
+    reconfigured to a different deployment, and that case has to force a reindex on its own,
+    not wait for a schema fingerprint that was never going to change to notice it.
+    """
+    if not qdrant.collection_exists(QDRANT_COLLECTION_TABLES):
+        return False
+    current_size = qdrant.get_collection(QDRANT_COLLECTION_TABLES).config.params.vectors.size
+    return current_size != EMBED_DIM
+
+
 def check_and_index():
     """Check if re-indexing is needed and perform it.
 
@@ -248,6 +277,9 @@ def check_and_index():
         db_fp = get_db_fingerprint(conn)
 
     try:
+        if _embedding_config_changed():
+            print("The embedding deployment has changed since this was last indexed; full re-index needed")
+            return full_reindex()
         qdrant_fp = get_qdrant_fingerprint()
     except Exception as exc:  # noqa: BLE001
         print(f"Could not read the search index to check it ({type(exc).__name__}: {exc}); leaving it as is.")

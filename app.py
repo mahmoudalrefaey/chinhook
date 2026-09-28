@@ -213,25 +213,6 @@ def render_detail(result):
                 unsafe_allow_html=True,
             )
 
-        # The rewrite the workflow worked from, and any disagreement between it and what the
-        # user wrote. Folded away, because it is a diagnostic and not the answer.
-        if result.get("rewrite") or result.get("rewrite_conflict"):
-            with st.expander("Rewritten before answering"):
-                if result.get("rewrite"):
-                    st.markdown(
-                        '<div class="panel-label">Read as</div>', unsafe_allow_html=True
-                    )
-                    st.markdown(result["rewrite"])
-                if result.get("rewrite_conflict"):
-                    st.markdown(
-                        '<div class="panel-label">Rejected</div>', unsafe_allow_html=True
-                    )
-                    st.markdown(result["rewrite_conflict"])
-                    st.markdown(
-                        "The wording the user sent was used instead, because the original "
-                        "question is the source of truth when the two disagree."
-                    )
-
         render_trace(result)
 
 
@@ -345,19 +326,11 @@ def render_failure(result):
     the kind of thing that is useful to whoever is looking after this and meaningless to
     whoever asked the question, so it is folded away rather than shown or lost.
     """
-    if result.get("needs_restart"):
-        body = (
-            "<strong>The database session needs restarting.</strong><br>"
-            "An earlier query failed and left the shared connection in an aborted "
-            "transaction, so every question after it fails too. Stop the app and start it "
-            "again to clear it."
-        )
-    else:
-        body = (
-            "<strong>That question could not be answered.</strong><br>"
-            "Something went wrong before there was a result to show. Asking again usually "
-            "works; if it keeps happening, the details are below."
-        )
+    body = (
+        "<strong>That question could not be answered.</strong><br>"
+        "Something went wrong before there was a result to show. Asking again usually "
+        "works; if it keeps happening, the details are below."
+    )
     st.markdown(f'<div class="notice">{body}</div>', unsafe_allow_html=True)
 
     detail = result.get("error")

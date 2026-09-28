@@ -1,9 +1,9 @@
 """The graph itself: nodes, edges and the one turn entry point.
 
 Routing is written in plain functions over the state, not in prompts, so the shape of the
-workflow is readable in one place and cannot drift. The loop that retries a failed task runs
-through node_repair_or_finish, which compares the task's attempt count against a fixed limit
-in the state, so a task cannot retry forever and a failing task never stops the others.
+workflow is readable in one place and cannot drift. Independent tasks run at the same time,
+each in its own copy of agent/task_graph.py's small graph (see node_run_tasks below), which
+is also where each task's own bounded retry loop lives, isolated from every other task's.
 
 No checkpointer is configured. That is deliberate: conversation state lives in the caller's
 ChatSession, which exists for one chat, and nothing here writes a checkpoint, stores a
@@ -17,16 +17,10 @@ import time
 from typing import Any, Callable, Optional
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Send
 
-from agent import nodes
-from agent.nodes import (
-    STAGE_EXECUTE,
-    STAGE_GENERATE,
-    STAGE_RETRIEVE,
-    STAGE_REWRITE,
-    STAGE_SUMMARISE,
-    STAGE_UNDERSTAND,
-)
+from agent import nodes, task_graph
+from agent.nodes import STAGE_GENERATE, STAGE_SUMMARISE, STAGE_UNDERSTAND
 from agent.session import new_chat
 from agent.state import (
     ChatSession,
@@ -36,63 +30,46 @@ from agent.state import (
     TokenUsage,
     Turn,
     Understanding,
-    split_schema,
 )
 
-# How a stage label maps onto the pipeline the interface already draws. One definition,
-# imported by chat_engine, so the diagram keeps its existing keys and is not extended.
-# Reading the question is accounted against the "question" node, which is the honest place
-# for it: the node already means "plain language in", and the diagram still lights the same
-# four stages in the same order as before.
+# How a stage label maps onto the pipeline the interface draws. One definition, imported by
+# chat_engine, so the diagram's keys and this module's stages cannot drift apart.
+#
+# Every task's own retrieve, generate, execute and verify steps run inside node_run_task,
+# which can be several tasks at once. There is no single "current stage" to announce while
+# that is happening the way there was when one task ran at a time, so the whole span is one
+# stage; see chat_engine.PIPELINE, which draws three nodes now rather than the five a
+# strictly sequential pipeline had room for.
 STAGE_TO_KEY = {
-    STAGE_REWRITE: "question",
     STAGE_UNDERSTAND: "question",
-    STAGE_RETRIEVE: "retrieve",
     STAGE_GENERATE: "generate",
-    STAGE_EXECUTE: "execute",
     STAGE_SUMMARISE: "summarise",
 }
 
 DEFAULT_MAX_ATTEMPTS = 2
 
-# One task, retried until it gives up, visits retrieve, ground, generate, validate, execute,
-# verify and repair once per attempt.
-_STEPS_PER_TASK_ATTEMPT = 7
-# Plus plan and next_task once per task, regardless of how many attempts that task takes.
-_FIXED_STEPS_PER_TASK = 2
-# rewrite, route and understand run once per request, and answer runs once at the end. The
-# rest is headroom, since being generous here costs nothing: a run that behaves normally never
-# comes close to this ceiling, and the ceiling only exists to stop one that does not.
-_FIXED_OVERHEAD = 8
+# Per task: entry, retrieve, generate, check_and_run, verify and repair once per attempt.
+_STEPS_PER_TASK = 3 + 3 * (DEFAULT_MAX_ATTEMPTS + 1)
+# route, understand and answer run once per request.
+_FIXED_OVERHEAD = 6
 
 
 def _recursion_limit(max_attempts: int) -> int:
-    """A recursion limit generous enough for the worst case LangGraph could actually reach.
+    """A recursion limit generous enough for the worst case this graph could actually reach.
 
-    The old limit was a function of max_attempts alone: 24 + 12 * max_attempts, which sized
-    the budget for one task and gave no more room for a second one. A question that splits
-    into two or more tasks, each retrying even once, could exceed it and lose the entire
-    turn, including whatever tasks inside it had already succeeded.
-
-    LangGraph needs this number before the graph runs, at a point where the real number of
-    tasks a question will become is not known yet: that only comes out of node_understand,
-    partway through the same invocation this limit is set for. Sizing against
-    MAX_TASKS_PER_REQUEST instead of the true count is what makes this correct rather than
-    just a bigger guess: node_understand enforces that same number as a hard cap on how many
-    tasks a single message can ever produce, so this is sized for the worst case that could
-    actually happen, not merely a case unlikely to be exceeded.
+    Sized against MAX_TASKS_PER_REQUEST, the hard cap node_understand itself enforces on how
+    many tasks one message can ever produce, rather than the number of tasks this particular
+    message turned into: that count is not known until node_understand has already run, which
+    is after LangGraph needs this limit. Each task also runs its own graph with its own
+    recursion budget (see task_graph.run_task), so this only has to cover the parent graph's
+    own steps.
     """
-    per_task = _FIXED_STEPS_PER_TASK + _STEPS_PER_TASK_ATTEMPT * (max_attempts + 1)
+    per_task = 3 + 3 * (max_attempts + 1)
     return _FIXED_OVERHEAD + MAX_TASKS_PER_REQUEST * per_task
 
 
 class Timing:
-    """Per-stage seconds for one request, plus the stage callback.
-
-    Retrieval runs once per task, so a three-task request adds to the same key rather than
-    overwriting it. The keys are the interface's existing ones, so the diagram shows the
-    same four stages it always did and no new measurement appears.
-    """
+    """Per-stage seconds for one request, plus the stage callback."""
 
     def __init__(self, announce: Optional[Callable[[str], None]] = None) -> None:
         self.announce = announce or (lambda _stage: None)
@@ -125,13 +102,6 @@ class Timing:
 
 
 def _timed(stage: str, announce: bool = True) -> Callable:
-    """Wrap a node so entering it announces the stage and accounts for the time it takes.
-
-    Nodes that only move the workflow along, rather than do work the user is waiting to see
-    finished, pass announce=False: their time is still counted, but the progress diagram
-    keeps showing the same stages it always did.
-    """
-
     def wrap(fn: Callable) -> Callable:
         def run(state: GraphState) -> dict:
             state["timing"].enter(stage, announce=announce)
@@ -143,90 +113,74 @@ def _timed(stage: str, announce: bool = True) -> Callable:
     return wrap
 
 
+# ---------- routing between the parent graph's own nodes ----------
+
+def route_after_route(state: GraphState) -> str:
+    return "greeting" if state.get("route") == "greeting" else "understand"
+
+
+def route_after_understand(state: GraphState):
+    understanding = state["understanding"]
+    if understanding.clarity == "unsupported":
+        return "answer"
+    if understanding.clarification is not None:
+        return "clarify"
+    tasks = state.get("tasks") or []
+    if not tasks:
+        return "answer"
+    # Entered here, once, rather than from inside node_run_task: that node runs once per
+    # task, possibly several at the same time on separate threads, and Timing.enter mutates
+    # shared counters that are not safe to touch from more than one thread at once. Called
+    # from this routing function instead, which LangGraph only ever calls once and
+    # synchronously, right before the tasks it is about to dispatch actually start.
+    state["timing"].enter(STAGE_GENERATE)
+    return [
+        Send("run_task", {"tasks": [t], "model": state["model"], "session": state["session"],
+                           "max_attempts": state.get("max_attempts", DEFAULT_MAX_ATTEMPTS)})
+        for t in tasks
+    ]
+
+
+# ---------- the node that runs one task's whole pipeline ----------
+
+def node_run_task(state: GraphState) -> dict:
+    """Run one task to completion in its own graph, and hand the result back to be merged.
+
+    state here is this branch's own local view: Send gave it exactly one task, and nothing
+    it does can be seen by any other branch until this returns. Not wrapped in _timed: see
+    the note in route_after_understand on why the shared Timing object is entered from there
+    instead, once, rather than from here on every task's own thread.
+    """
+    task = state["tasks"][0]
+    finished, spent, task_trace = task_graph.run_task(
+        task, state["model"], state["session"], state.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
+    )
+    return {"tasks": [finished], "task_usages": [spent], "trace": task_trace}
+
+
 def build_graph():
     """Assemble the workflow. Deterministic edges, no cycle without a counter."""
     graph = StateGraph(GraphState)
 
-    graph.add_node("rewrite", _timed(STAGE_REWRITE)(nodes.node_rewrite))
     graph.add_node("route", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_route))
     graph.add_node("greeting", _timed(STAGE_SUMMARISE)(nodes.node_greeting))
-    graph.add_node("understand", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_understand))
+    graph.add_node("understand", _timed(STAGE_UNDERSTAND)(nodes.node_understand))
     graph.add_node("clarify", _timed(STAGE_SUMMARISE)(nodes.node_clarify))
-    graph.add_node("plan", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_plan))
-    graph.add_node("retrieve", _timed(STAGE_RETRIEVE)(nodes.node_retrieve))
-    graph.add_node("ground", _timed(STAGE_RETRIEVE)(nodes.node_ground))
-    graph.add_node("generate", _timed(STAGE_GENERATE)(nodes.node_generate))
-    graph.add_node("validate", _timed(STAGE_GENERATE, announce=False)(nodes.node_validate))
-    graph.add_node("execute", _timed(STAGE_EXECUTE)(nodes.node_execute))
-    graph.add_node("verify", _timed(STAGE_EXECUTE, announce=False)(nodes.node_verify))
-    graph.add_node("repair", _timed(STAGE_GENERATE, announce=False)(nodes.node_repair_or_finish))
-    graph.add_node("next_task", _timed(STAGE_UNDERSTAND, announce=False)(nodes.node_next_task))
+    graph.add_node("run_task", node_run_task)
     graph.add_node("answer", _timed(STAGE_SUMMARISE)(nodes.node_answer))
 
-    graph.add_edge(START, "rewrite")
+    graph.add_edge(START, "route")
     graph.add_conditional_edges(
-        "rewrite",
-        nodes.route_after_rewrite,
-        {"clarify": "clarify", "route": "route"},
-    )
-    graph.add_conditional_edges(
-        "route",
-        nodes.route_after_route,
-        {
-            "greeting": "greeting",
-            "clarify": "clarify",
-            "understand": "understand",
-            "plan": "plan",
-        },
+        "route", route_after_route, {"greeting": "greeting", "understand": "understand"}
     )
     graph.add_edge("greeting", END)
 
     graph.add_conditional_edges(
-        "understand",
-        nodes.route_after_understand,
-        {"clarify": "clarify", "answer": "answer", "plan": "plan"},
+        "understand", route_after_understand, ["clarify", "answer", "run_task"]
     )
     graph.add_edge("clarify", END)
+    graph.add_edge("run_task", "answer")
     graph.add_edge("answer", END)
-
-    graph.add_edge("plan", "retrieve")
-    graph.add_conditional_edges(
-        "retrieve",
-        nodes.route_after_retrieve,
-        {
-            "repair": "repair",
-            "ground": "ground",
-            "generate": "generate",
-            "verify": "verify",
-            "next_task": "next_task",
-        },
-    )
-    graph.add_conditional_edges(
-        "ground",
-        nodes.route_after_ground,
-        {"generate": "generate", "next_task": "next_task"},
-    )
-
-    graph.add_edge("generate", "validate")
-    graph.add_conditional_edges(
-        "validate", nodes.route_after_validate, {"execute": "execute", "repair": "repair"}
-    )
-    graph.add_conditional_edges(
-        "execute",
-        nodes.route_after_execute,
-        {"verify": "verify", "repair": "repair", "answer": "answer"},
-    )
-    graph.add_conditional_edges(
-        "verify",
-        nodes.route_after_verify,
-        {"next_task": "next_task", "repair": "repair", "answer": "answer"},
-    )
-    graph.add_conditional_edges(
-        "repair", nodes.route_after_repair, {"retrieve": "retrieve", "next_task": "next_task"}
-    )
-    graph.add_conditional_edges(
-        "next_task", nodes.route_after_next_task, {"plan": "plan", "answer": "answer"}
-    )
 
     return graph.compile()
 
@@ -243,11 +197,7 @@ def _compiled():
 
 
 class WorkflowError(Exception):
-    """A failure that escaped every node, carrying the flag the interface already shows."""
-
-    def __init__(self, message: str, needs_restart: bool = False) -> None:
-        super().__init__(message)
-        self.needs_restart = needs_restart
+    """A failure that escaped every node."""
 
 
 def run_turn(
@@ -270,26 +220,16 @@ def run_turn(
     timing = Timing(on_stage)
     started = time.perf_counter()
 
-    # Nothing is marked answered here. The router needs the open question and its options to
-    # read the reply against, and the question itself stays on the session until that
-    # decision has been made, so it is recorded afterwards by the node that made it.
-
     initial: GraphState = {
         "session": session,
         "model": model,
         "question": question,
-        # What the user typed, kept beside the working question for the rest of the run. The
-        # rewrite node replaces "question" with the clearer version; this is never replaced.
         "raw_question": question,
-        "rewrite": "",
-        "rewrite_conflict": "",
         "trace": [],
         "usage": TokenUsage(),
+        "task_usages": [],
         "max_attempts": max_attempts,
-        "current_index": 0,
-        "phase": "start",
-        "needs_restart": False,
-        "clarifications": [],
+        "clarification": None,
         "understanding": Understanding(),
         "original_question": "",
         "clarification_answer": "",
@@ -326,6 +266,8 @@ def _result_from_state(
 ) -> dict[str, Any]:
     tasks: list[TaskState] = list(state.get("tasks") or [])
     usage: TokenUsage = state.get("usage") or TokenUsage()
+    for spent in state.get("task_usages") or []:
+        usage.add(spent)
     answer = state.get("answer")
     kind = state.get("answer_kind") or "answer"
     primary = _primary(tasks)
@@ -333,10 +275,11 @@ def _result_from_state(
     definitions: list[str] = []
     seen: set[str] = set()
     for task in tasks:
-        for name, definition in split_schema(task.schema).items():
-            if name not in seen:
+        for name in task.schema_tables:
+            if name not in seen and task.schema:
                 seen.add(name)
-                definitions.append(definition)
+        if task.schema and task.schema not in definitions:
+            definitions.append(task.schema)
 
     result: dict[str, Any] = {
         "ok": bool(answer),
@@ -348,12 +291,8 @@ def _result_from_state(
         "model": model,
         "timings": {},
         "error": state.get("error"),
-        "needs_restart": bool(state.get("needs_restart")),
-        # Additive: the interface's existing panels are untouched, these are new.
         "kind": kind,
         "route": state.get("route") or "",
-        "rewrite": state.get("rewrite") or "",
-        "rewrite_conflict": state.get("rewrite_conflict") or "",
         "clarification": _clarification_payload(state),
         "tasks": [task.as_trace() for task in tasks],
         "trace": list(state.get("trace") or []),

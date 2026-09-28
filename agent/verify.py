@@ -79,23 +79,30 @@ def statement_limit(sql: Optional[str]) -> Optional[int]:
         return None
 
 
-def referenced_tables(sql: Optional[str]) -> list[str]:
-    """Table names the query reads, case-normalised to the real catalog spelling.
+def tables_in(expression) -> list[str]:
+    """Table names an already-parsed query reads.
 
     A schema-qualified table is reported with its schema, because a name that says which
-    schema it is in says something a bare name does not.
+    schema it is in says something a bare name does not. Split out from referenced_tables so
+    a caller that has already parsed the query, such as the task graph's own validity check,
+    reads the same tree it just built rather than paying for a second parse of the same SQL.
     """
+    names = []
+    for table in expression.find_all(sqlglot.exp.Table):
+        name = f"{table.db}.{table.name}" if table.db else table.name
+        names.append(name)
+    return names
+
+
+def referenced_tables(sql: Optional[str]) -> list[str]:
+    """Table names the query reads, parsing it first. See tables_in for the parsed form."""
     if not sql:
         return []
     try:
         expression = sqlglot.parse_one(sql, read="postgres")
     except Exception:
         return []
-    names = []
-    for table in expression.find_all(sqlglot.exp.Table):
-        name = f"{table.db}.{table.name}" if table.db else table.name
-        names.append(name)
-    return names
+    return tables_in(expression)
 
 
 def has_group_by(sql: Optional[str]) -> bool:
@@ -156,6 +163,20 @@ def verify_task(task, execution: dict[str, Any]) -> tuple[str, list[dict[str, An
             )
             return "fail", checks, ""
         checks.append(_check("cardinality", "pass", f"within the requested {expected_limit} row(s)"))
+    elif task.sql_limit is not None and task.expected_row_kind == "rows":
+        # The user never asked for a specific count, and the shape this task expects is
+        # "every matching row", not a top-N ranking. A LIMIT here is not a cautious default,
+        # it is silently dropping rows nobody asked to have dropped: models writing this kind
+        # of query lean toward a small LIMIT far more often than a person would ask for one.
+        checks.append(
+            _check(
+                "cardinality",
+                "fail",
+                f"the query limits to {task.sql_limit} rows but the user asked for every "
+                "matching row, with no number mentioned",
+            )
+        )
+        return "fail", checks, ""
     else:
         checks.append(_check("cardinality", "unknown", "no row count was specified by the user"))
 

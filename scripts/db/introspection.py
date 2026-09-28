@@ -1,5 +1,13 @@
 """What tables the database has, and what columns they hold."""
 
+# This application's own bookkeeping, not data a question could ever legitimately be about.
+# Excluded from every function here so it never reaches the schema a question is answered
+# against: chat_sessions holds every user's saved conversation, in one shared table, and
+# letting it be retrieved like an ordinary table would mean a question the model wrote SQL
+# for could read another visitor's chat history rather than being refused as out of scope.
+# Must match the table name agent/persistence.py actually creates.
+_INTERNAL_TABLES = {"chat_sessions"}
+
 
 def get_table_defs(conn, schema_name="public"):
     with conn.cursor() as cur:
@@ -14,6 +22,8 @@ def get_table_defs(conn, schema_name="public"):
 
     tables = {}
     for table, col, dtype in rows:
+        if table in _INTERNAL_TABLES:
+            continue
         tables.setdefault(table, []).append(f"{col} ({dtype})")
     return [f'"{t}"({", ".join(cols)})' for t, cols in tables.items()]
 
@@ -27,7 +37,7 @@ def get_table_names(conn, schema_name="public"):
              ORDER BY table_name """,
             (schema_name,),
         )
-        return [row[0] for row in cur.fetchall()]
+        return [row[0] for row in cur.fetchall() if row[0] not in _INTERNAL_TABLES]
 
 
 def get_foreign_keys(conn, schema_name="public") -> dict[str, set[str]]:

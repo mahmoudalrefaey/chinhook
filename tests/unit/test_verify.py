@@ -81,3 +81,32 @@ def test_execution_error_fails_immediately():
     verdict, checks, _ = v.verify_task(task, {"error": "relation does not exist"})
     assert verdict == "fail"
     assert checks[0]["check"] == "execution"
+
+
+def test_a_self_imposed_limit_fails_when_the_user_never_asked_for_one():
+    # The bug this closes: models writing this kind of query lean toward a small LIMIT far
+    # more often than a person would ask for one, so "list every genre" silently came back
+    # with 5 of the 25 real rows and nothing said so.
+    task = _task(question="list every genre name", intent="list")
+    task.sql = 'SELECT name FROM genre LIMIT 5'
+    task.sql_limit = 5
+    verdict, checks, _ = v.verify_task(task, {"row_count": 5, "error": None})
+    assert verdict == "fail"
+    cardinality = next(c for c in checks if c["check"] == "cardinality")
+    assert cardinality["verdict"] == "fail"
+
+
+def test_a_limit_is_fine_when_the_user_actually_asked_for_one():
+    task = _task(question="top 5 selling tracks", intent="rank", expected_limit=5)
+    task.sql = 'SELECT name FROM track ORDER BY sales DESC LIMIT 5'
+    task.sql_limit = 5
+    verdict, _, _ = v.verify_task(task, {"row_count": 5, "error": None})
+    assert verdict == "pass"
+
+
+def test_no_limit_at_all_is_fine_when_the_user_never_asked_for_one():
+    task = _task(question="list every genre name", intent="list")
+    task.sql = 'SELECT name FROM genre'
+    task.sql_limit = None
+    verdict, _, _ = v.verify_task(task, {"row_count": 25, "error": None})
+    assert verdict != "fail"

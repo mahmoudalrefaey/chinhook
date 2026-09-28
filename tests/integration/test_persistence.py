@@ -42,7 +42,7 @@ def test_save_then_load_round_trips_a_conversation(temp_session_id):
     session.schema_cache.tables["customer"] = '"customer"(customer_id, name)'
     session.pending_clarification = Clarification(
         question="quantity or revenue?", options=["quantity", "revenue"],
-        asked=True, scope="request", original_question="top selling tracks",
+        asked=True, original_question="top selling tracks",
     )
 
     save(session)
@@ -56,7 +56,6 @@ def test_save_then_load_round_trips_a_conversation(temp_session_id):
     assert restored.pending_clarification is not None
     assert restored.pending_clarification.question == "quantity or revenue?"
     assert restored.pending_clarification.options == ["quantity", "revenue"]
-    assert restored.pending_clarification.pending_tasks == []
 
 
 def test_saving_again_replaces_rather_than_duplicates(temp_session_id):

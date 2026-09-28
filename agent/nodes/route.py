@@ -1,189 +1,112 @@
-"""Deciding where a message goes, before anything is retrieved, written or run.
-
-Three of the six routes never reach the database at all, so this is also where a turn that
-would have cost a search, a query and two model calls for nothing is saved."""
+"""Deciding where a message goes, before anything is retrieved, written or run."""
 
 from agent import router
-from agent.nodes.common import _trace, _usage
+from agent.nodes.common import _trace
 from agent.state import GraphState
 
 
 def node_route(state: GraphState) -> dict:
-    """Decide where this message goes before anything is retrieved, written or run.
+    """Greeting, a reply to an open clarification, or an ordinary question.
 
-    Three of the six routes never reach the database at all, so this is also where a turn
-    that would have cost a search, a query and two model calls for nothing is saved.
+    The only routes that skip node_understand entirely. Everything else, including a
+    question about the conversation or about the assistant, goes there: it has the schema,
+    the history and the message together, and can also split a message that holds more than
+    one thing, none of which this function needs to know to make its own two decisions.
     """
     session = state["session"]
     question = state["question"]
-    # What the user typed, beside the message the workflow is working on. The router places
-    # the message on the user's own words; the rewrite only explains what they referred to.
     raw = state.get("raw_question") or question
-    model = state["model"]
 
-    # The guard against a wrong "greeting" verdict lives inside router.classify() itself now,
-    # not here, so that it protects every caller of classify() rather than only this one.
-    decision = router.classify(question, session, model, raw=raw)
-    usage = _usage(state, decision.usage)
-    trace = _trace(
-        state,
-        "route",
-        decision.route,
-        detail=decision.reason or question[:80],
-    )
-
-    if decision.route == "greeting":
-        if decision.reply is None or not decision.reply.resolved:
+    if router.is_small_talk(raw):
+        if session.pending_clarification is not None:
             # The user said something like "thanks" or "never mind" instead of answering.
             # Without this, the question that was open stays open and silently intercepts
             # whatever the user asks next, tried against options that have nothing to do
             # with it.
             session.pending_clarification = None
         return {
-            "route": decision.route,
-            "route_reason": decision.reason,
-            "usage": usage,
-            "trace": trace,
-            "phase": "routed",
+            "route": "greeting",
+            "route_reason": "small talk with no question in it",
+            "trace": _trace(state, "route", "greeting", detail=raw[:80]),
         }
 
-    if decision.route in {"conversation", "meta", "database", "followup"} and (
-        decision.reply is None or not decision.reply.resolved
-    ):
-        # The user moved on. An open question they are not answering any more is not left
-        # waiting to swallow their next message.
-        session.pending_clarification = None
+    pending = session.pending_clarification
+    if pending is not None and (pending.resolved or not pending.asked):
+        pending = None
 
-    if decision.route == "clarification" and decision.reply is not None and decision.reply.resolved:
-        resumed = _resume_after_clarification(state, decision.reply, trace)
-        resumed["usage"] = usage
-        return resumed
-    if decision.route == "clarification":
-        # An open question was not answered in a way that can be read. Nothing is
-        # restarted: the same question goes back with a note about what was not understood,
-        # so the user is asked about the missing part rather than the whole request again.
-        pending = state["session"].pending_clarification
-        detail = (
-            f"reply could not be matched to the options of: {pending.question}"
-            if pending is not None
-            else "reply could not be matched"
-        )
-        trace = trace + [
-            {
-                "node": "clarify",
-                "event": "not understood",
-                "detail": detail,
-                "reply": question,
-            }
-        ]
-        if pending is not None:
-            return {
-                "route": decision.route,
-                "route_reason": decision.reason,
-                "clarification": pending,
-                "clarification_answer": question,
-                "clarification_rejected": True,
-                "usage": usage,
-                "trace": trace,
-                "phase": "routed",
-            }
+    if pending is None:
         return {
-            "route": "database",
-            "route_reason": decision.reason,
-            "usage": usage,
-            "trace": trace,
-            "phase": "routed",
+            "route": "question",
+            "trace": _trace(state, "route", "question", detail=raw[:80]),
         }
 
+    reply = router.resolve_clarification_reply(raw, pending)
+    if reply.resolved:
+        return _resume_after_clarification(state, pending, reply)
+
+    if router.looks_like_a_new_request(raw, pending):
+        # The user moved on without answering. The open question is dropped rather than
+        # left to swallow this new one.
+        session.pending_clarification = None
+        return {
+            "route": "question",
+            "trace": _trace(state, "route", "question", detail="a different request while a question was open"),
+        }
+
+    # A short reply that named none of the options. There is no cheap way left to tell
+    # whether it answers the open question or starts a new one without asking a model, so it
+    # goes to node_understand with the open question still attached: understand is already
+    # given the conversation and can read a short reply against what was asked, the same way
+    # it reads any other follow-up.
     return {
-        "route": decision.route,
-        "route_reason": decision.reason,
-        "usage": usage,
-        "trace": trace,
-        "phase": "routed",
+        "route": "question",
+        "trace": _trace(state, "route", "question", detail="a short reply, read against the open question"),
     }
 
 
-def _resume_after_clarification(
-    state: GraphState, reply: router.ClarificationReply, trace: list[dict]
-) -> dict:
+def _resume_after_clarification(state: GraphState, pending, reply: router.ClarificationReply) -> dict:
     """Put the answered question back and carry on from where it stopped.
 
     A reply to a clarification is not a new request. The request that caused the question is
-    restored, the work already done for it is kept, and only the part that depended on the
-    answer is run again. That is what stops a user being asked the same thing twice, and it
-    is why a two part question does not start over when the answer to one part arrives.
+    read again, in full, with the answer applied, rather than continuing from whatever partial
+    work an earlier attempt left behind: node_understand is cheap enough now, on a retrieved
+    slice of the schema rather than the whole catalog, that re-reading the original request is
+    not worth optimising away, and it is what keeps this correct when the answer changes which
+    tables the request even needs.
     """
     session = state["session"]
-    pending = session.pending_clarification
-    if pending is None:  # nothing to resume; treat the message as an ordinary question
-        return {"route": "database", "trace": trace, "phase": "routed"}
-
-    # The user's own words are what is recorded and what the question they answered is
-    # recorded against, whichever version of the message the workflow was working on.
     said = state.get("raw_question") or state["question"]
+    trace = _trace(
+        state, "route", "clarification resolved",
+        detail=f"answered with: {said}", task=None,
+    )
 
-    # The reply is now understood, so the exchange is recorded and the open question is
-    # closed. Everything after this point is the original request, not a new one.
     session.remember_clarification(pending.question, pending.options, said)
     session.pending_clarification = None
 
-    trace = trace + [
-        {
-            "node": "clarify",
-            "event": "resolved",
-            "detail": f"answered with: {said}",
-            "options": list(pending.options),
-            "selection": list(reply.selection or []),
-        }
-    ]
-
     if reply.negative:
+        # The user rejected the reading that was offered, not merely left it unanswered.
+        # The original request is read again, but with that reading now marked as wrong
+        # rather than with no context at all: without the original request attached here,
+        # understand had nothing to work from but the bare word "no".
         return {
-            "route": "database",
-            "trace": trace + [{"node": "clarify", "event": "declined",
-                               "detail": "the user did not accept the reading on offer"}],
-            "clarification_answer": said,
-            "phase": "routed",
-        }
-
-    original = pending.original_question or said
-    if pending.scope == "task" and pending.pending_tasks:
-        tasks = pending.pending_tasks
-        affected = set(pending.task_ids)
-        for task in tasks:
-            if task.task_id in affected:
-                task.reset_for_retry()
-                task.clarification_answer = said
-        index = next(
-            (i for i, task in enumerate(tasks) if task.task_id in affected), 0
-        )
-        return {
-            "route": "followup",
-            "route_reason": f"resumed after an answer about {', '.join(sorted(affected))}",
-            "original_question": original,
-            "clarification_answer": said,
+            "route": "question",
+            "original_question": pending.original_question,
+            "clarification_answer": (
+                f"No, that is not what was meant. The question you asked was: "
+                f"\"{pending.question}\" and none of the offered readings "
+                f"({', '.join(pending.options)}) apply. Read the original request again and "
+                "either find a different, more specific reading of it or ask a different, "
+                "more specific question."
+            ),
             "clarification_resumed": True,
-            "tasks": tasks,
-            "current_index": index,
-            "clarification": None,
-            "clarifications": [],
-            "trace": trace,
-            "phase": "routed",
+            "trace": trace + [{"node": "route", "event": "declined", "detail": "the offered reading was rejected"}],
         }
 
-    # The whole request was on hold, so the original message is read again with the answer
-    # in hand. The reply is never read on its own.
     return {
-        "route": "followup",
-        "route_reason": "re-reading the original request with the answer applied",
-        "original_question": original,
+        "route": "question",
+        "original_question": pending.original_question,
         "clarification_answer": said,
         "clarification_resumed": True,
-        "tasks": [],
-        "current_index": 0,
-        "clarification": None,
-        "clarifications": [],
         "trace": trace,
-        "phase": "routed",
     }

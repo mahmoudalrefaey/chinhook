@@ -1,7 +1,7 @@
 """What every node needs: the stage labels, the small state helpers, and the
 shapes a task is built from."""
 
-from typing import Any, Optional
+from typing import Any
 
 from agent import schema as schema_store, verify as verification
 from agent.state import GraphState, TaskState, TokenUsage, Understanding
@@ -9,13 +9,14 @@ from agent.state import GraphState, TaskState, TokenUsage, Understanding
 
 # ---------- stage labels ----------
 # Reused by chat_engine so the existing pipeline diagram lights up in the same order and
-# with the same four labels it has always used.
+# with the same labels it has always used.
 
 STAGE_UNDERSTAND = "Reading the question"
-STAGE_REWRITE = "Making the question clear"
-STAGE_RETRIEVE = "Finding relevant tables"
-STAGE_GENERATE = "Writing the query"
-STAGE_EXECUTE = "Running it against the database"
+# Retrieval, writing SQL, running it and verifying it all happen inside one task's own graph
+# (agent/task_graph.py), for however many tasks a message turned into, possibly at the same
+# time as each other. There is no single "current stage" to announce while that is
+# happening the way there was when one task ran at a time, so the whole span is one stage.
+STAGE_GENERATE = "Answering the question"
 STAGE_SUMMARISE = "Putting the answer together"
 
 
@@ -50,28 +51,24 @@ _INTENT_ROW_KIND = {
 # ---------- small helpers ----------
 
 def _trace(state: GraphState, node: str, event: str, detail: str = "", **data) -> list[dict]:
+    """One new trace entry, as the single-item list the trace reducer expects to append.
+
+    Does not read the accumulated trace out of state: GraphState's trace key concatenates
+    automatically, including entries written by task branches running in parallel with this
+    node, so re-reading and re-returning the whole history here would double it up.
+    """
     entry = {"node": node, "event": event}
     if detail:
         entry["detail"] = detail
     if data:
         entry["data"] = data
-    trace = list(state.get("trace") or [])
-    trace.append(entry)
-    return trace
+    return [entry]
 
 
 def _usage(state: GraphState, spent: TokenUsage) -> TokenUsage:
     total = state.get("usage") or TokenUsage()
     total.add(spent)
     return total
-
-
-def _current_task(state: GraphState) -> Optional[TaskState]:
-    tasks = state.get("tasks") or []
-    index = state.get("current_index", 0)
-    if 0 <= index < len(tasks):
-        return tasks[index]
-    return None
 
 
 def _is_meta(task: TaskState) -> bool:
@@ -147,12 +144,6 @@ def _task_from_spec(spec: dict[str, Any], index: int, raw: str) -> TaskState:
         expected_limit=limit,
         expected_row_kind=_INTENT_ROW_KIND[intent],
         needs_sql=intent != "meta",
-        needs_grounding=bool(spec.get("needs_grounding")),
-        pending_ambiguity=str(spec.get("ambiguity") or "").strip(),
-        pending_ambiguity_options=[
-            str(o).strip() for o in (spec.get("ambiguity_options") or []) if str(o).strip()
-        ],
-        ambiguity_kind=str(spec.get("ambiguity_kind") or "").strip().lower(),
     )
 
 
@@ -167,16 +158,3 @@ def _fallback_understanding(question: str) -> Understanding:
         resolved_question=question,
         tasks=[TaskState(task_id="T1", raw=question, question=question, intent="other")],
     )
-
-
-def _next_open_task(tasks: list[TaskState], start: int) -> int:
-    """The first task at or after start that still has work to do.
-
-    Resuming after a clarification keeps the tasks that were already answered, so the walk
-    has to step over them rather than run them again or stop short of them.
-    """
-    for index in range(max(0, start), len(tasks)):
-        task = tasks[index]
-        if task.status != "verified":
-            return index
-    return len(tasks)

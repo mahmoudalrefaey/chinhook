@@ -11,14 +11,8 @@ Held in its own small table, using a plain read-write connection of its own rath
 pooled read-only one the query path uses: writing this table is exactly the kind of write
 that role is deliberately not allowed to make.
 
-A clarification a user has not yet answered is persisted too, but only the part of it that
-is plain data. The task-level detail behind a clarification scoped to one task of several
-(pending_tasks, itself a list of full TaskState objects) is not reconstructed on load, since
-doing that faithfully would mean serialising the workflow's own internal state rather than
-the conversation record this module is for. A restored session with such a clarification
-still resumes correctly: the code that resumes one already treats an empty pending_tasks as
-"resume the whole original request from the answer", which is exactly what happens here, just
-without the narrower per-task shortcut a same-process resume would have taken.
+A clarification a user has not yet answered is persisted too, so a chat reopened after a
+restart still resumes correctly when the user finally answers it.
 """
 
 from __future__ import annotations
@@ -111,9 +105,7 @@ def _dict_to_session(data: dict) -> ChatSession:
             reason=pending.get("reason", ""),
             resolved=bool(pending.get("resolved", False)),
             asked=bool(pending.get("asked", False)),
-            scope=pending.get("scope", "request"),
             original_question=pending.get("original_question", ""),
-            task_ids=pending.get("task_ids") or [],
         )
     return session
 

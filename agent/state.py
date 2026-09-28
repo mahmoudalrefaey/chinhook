@@ -17,9 +17,9 @@ result by writing to a shared key.
 
 from __future__ import annotations
 
+import operator
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Optional, TypedDict
-import operator
 
 # The most tasks a single message is ever decomposed into. LangGraph's own recursion limit
 # has to be set once, before the graph runs, at a point where the real number of tasks a
@@ -33,7 +33,6 @@ Clarity = Literal["clear", "ambiguous", "insufficient_context", "unsupported"]
 TaskStatus = Literal[
     "pending",
     "schema_retrieved",
-    "grounded",
     "sql_ready",
     "executed",
     "verified",
@@ -44,17 +43,16 @@ VerificationStatus = Literal["pass", "fail", "unknown"]
 # Why a task did not produce an answer. The user is told in words rather than in jargon, and
 # the difference matters: a question about something this database does not hold is not the
 # same as a question whose query was rejected, and neither is the same as one whose result
-# did not survive verification.
+# did not survive verification. Ambiguity and missing context stop a request before any task
+# is even built, so they are not a task's own failure_kind; see Clarity and Understanding
+# instead.
 FailureKind = Literal[
     "schema_retrieval",
     "sql_generation",
     "sql_validation",
     "sql_execution",
     "result_verification",
-    "ambiguous",
-    "insufficient_context",
     "unsupported",
-    "clarification",
 ]
 
 
@@ -97,10 +95,12 @@ class TokenUsage:
 class Clarification:
     """A question put to the user because the request cannot be answered as understood.
 
-    It also remembers where it came from, because a reply to it has to resume the request
-    that caused it rather than be read as a fresh question. original_question is the message
-    the user actually asked, task_ids are the tasks waiting on this answer, and
-    pending_tasks is the work already done, so a reply re-runs only what depends on it.
+    Always about the whole request, never about one task among several: asking about the one
+    part of a message that is unclear while quietly running the rest used to leave the user
+    reading a part-answer they had not asked for yet, next to a question about a different
+    part of the same message. Holding the entire request until it is answered is simpler and
+    is what a person doing this by hand would do. original_question is the message the user
+    actually asked, so a reply resumes that request rather than being read as a fresh one.
     """
 
     question: str
@@ -108,18 +108,13 @@ class Clarification:
     reason: str = ""
     resolved: bool = False
     asked: bool = False
-    scope: str = "request"                  # request | task
     original_question: str = ""
-    task_ids: list[str] = field(default_factory=list)
-    pending_tasks: list["TaskState"] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "question": self.question,
             "options": list(self.options),
             "reason": self.reason,
-            "scope": self.scope,
-            "task_ids": list(self.task_ids),
             "original_question": self.original_question,
         }
 
@@ -198,19 +193,15 @@ class TaskState:
     metrics: list[str] = field(default_factory=list)
     expected_limit: Optional[int] = None  # "top 5" -> 5
     expected_row_kind: str = "rows"       # rows | count | single
-    needs_grounding: bool = False
 
     semantic: str = ""                    # how the user's words map onto the schema
-    semantic_ambiguity: str = ""          # set when grounding found a material ambiguity
     needs_sql: bool = True
-    clarification_answer: str = ""         # the user's reply to a question about this task
-    pending_ambiguity: str = ""            # a clause held back, waiting on the user
-    pending_ambiguity_options: list[str] = field(default_factory=list)
-    ambiguity_kind: str = ""               # what the held clause is about, when it is held
+    clarification_answer: str = ""        # the user's reply, when this request was resumed
 
     schema: str = ""                      # schema context used for this task
     schema_tables: list[str] = field(default_factory=list)
     schema_from_cache: bool = False
+    value_hints: list[dict[str, Any]] = field(default_factory=list)  # real values a filter might mean
 
     sql: Optional[str] = None
     sql_repaired: bool = False
@@ -229,7 +220,6 @@ class TaskState:
     verification: str = "unknown"         # pass | fail | unknown
     verification_checks: list[dict[str, Any]] = field(default_factory=list)
     verification_notes: str = ""
-    semantic_checks_used: int = 0
 
     attempts: int = 0
     failure_reason: Optional[str] = None
@@ -258,48 +248,9 @@ class TaskState:
             "verification": self.verification,
             "verification_checks": self.verification_checks,
             "attempts": self.attempts,
-            "semantic_checks_used": self.semantic_checks_used,
             "failure_kind": self.failure_kind,
             "failure_reason": self.failure_reason,
         }
-
-    def reset_for_retry(self) -> None:
-        """Put a task that was paused for a clarification back to the start of the pipeline.
-
-        This is only ever called when a held question has just been answered, never from the
-        ordinary in-turn repair loop, which counts its own attempts and resets its own fields
-        directly in node_repair_or_finish. That distinction matters for what gets cleared
-        here: a task on hold for a question was not a failed attempt, so its attempt count
-        starts fresh rather than carrying over whatever it had used up before it paused, and
-        the question that was just answered is cleared rather than kept, since holding onto
-        it here is what let the same question come back and be asked again after the user had
-        already answered it, with no way out short of starting a new chat.
-
-        The question, the entity, the filters and any answer the user already gave stay,
-        because those were settled. What goes is the work built on top of them: the query,
-        its result and the verdict, all of which have to be produced again.
-        """
-        self.status = "pending"
-        self.verification = "unknown"
-        self.verification_checks = []
-        self.verification_notes = ""
-        self.semantic_checks_used = 0
-        self.rows = []
-        self.columns = []
-        self.row_count = 0
-        self.sql = None
-        self.sql_repaired = False
-        self.sql_limit = None
-        self.execution_status = "pending"
-        self.error = None
-        self.validation_error = None
-        self.failure_kind = ""
-        self.failure_reason = None
-        self.semantic_ambiguity = ""
-        self.pending_ambiguity = ""
-        self.pending_ambiguity_options = []
-        self.repair_hint = ""
-        self.attempts = 0
 
 
 # ---------- understanding ----------
@@ -312,7 +263,6 @@ class Understanding:
     kind: Literal["request", "correction", "about_chat"] = "request"
     resolved_question: str = ""
     context_notes: str = ""           # how this message was resolved against the chat
-    semantic_mappings: list[dict[str, str]] = field(default_factory=list)
     tasks: list[TaskState] = field(default_factory=list)
     clarification: Optional[Clarification] = None
     unsupported_reason: str = ""
@@ -420,29 +370,55 @@ class ChatSession:
         return f"A clarification is still open: {self.pending_clarification.question}{hint}"
 
 
+def merge_tasks(existing: Optional[list[TaskState]], update) -> list[TaskState]:
+    """Combine parallel per-task branches back into one list, ordered and deduplicated by id.
+
+    Each task runs in its own branch of the graph (see agent/task_graph.py), so the same key
+    receives one update per branch in the same step. A plain list reducer such as
+    operator.add would concatenate those updates instead of replacing a task by its id, which
+    is what turns "three tasks each wrote their own result" into "three results, some of them
+    stale copies of a task that was retried." Ordered by task_id so the result is always
+    T1, T2, T3, ... regardless of which branch happened to finish first.
+    """
+    by_id = {t.task_id: t for t in (existing or [])}
+    incoming = update if isinstance(update, list) else [update]
+    for task in incoming:
+        by_id[task.task_id] = task
+    return [by_id[key] for key in sorted(by_id)]
+
+
+def _sum_usage(existing: list[TokenUsage], update) -> list[TokenUsage]:
+    incoming = update if isinstance(update, list) else [update]
+    return [*(existing or []), *incoming]
+
+
 # ---------- graph state ----------
 
 class GraphState(TypedDict, total=False):
     """State LangGraph threads between nodes.
 
-    Reducers are deliberately absent: every node runs in sequence, and a plain overwrite is
-    what keeps a node from being able to append a second result under an existing key.
+    trace and task_usages concatenate, and tasks merges by id, all for the same reason:
+    several task branches can write to them in the same step (see agent/task_graph.py). Every
+    other key is written by exactly one node per step, so a plain overwrite is what keeps a
+    node from being able to append a second result under an existing key.
     """
 
     session: ChatSession
     model: str
     question: str
     raw_question: str
-    rewrite: str
-    rewrite_conflict: str
-    trace: list[dict[str, Any]]
+    trace: Annotated[list[dict[str, Any]], operator.add]
     usage: TokenUsage
+    # One entry per task, added by that task's own branch of the graph. Kept separate from
+    # usage, which is the running total for everything that is not a task (routing,
+    # understanding, the final reply): the two are combined into one total only once, when
+    # the turn's result is built, rather than both trying to accumulate into the same key
+    # from steps that can run in parallel with each other.
+    task_usages: Annotated[list[TokenUsage], _sum_usage]
     max_attempts: int
 
     understanding: Understanding
-    tasks: list[TaskState]
-    current_index: int
-    phase: str
+    tasks: Annotated[list[TaskState], merge_tasks]
 
     route: str
     route_reason: str
@@ -451,11 +427,8 @@ class GraphState(TypedDict, total=False):
     clarification_resumed: bool
 
     clarification: Optional[Clarification]
-    # Accumulates, so two tasks that each need an answer both keep their question.
-    clarifications: Annotated[list[Clarification], operator.add]
 
     answer: Optional[str]
     answer_kind: str
     error: Optional[str]
-    needs_restart: bool
     timing: Any

@@ -1,33 +1,8 @@
 """Regression tests for the state-machine bugs found by actually running the workflow:
-a clarifying question that could never be closed, and a task that could be marked verified
-without a query ever running.
+a task that could be marked verified without a query ever running.
 """
 
 from agent.nodes.common import _is_meta, _task_from_spec
-from agent.state import TaskState
-
-
-def test_reset_for_retry_clears_the_held_question():
-    # Without this, answering a clarifying question did not close it: the same question came
-    # back, worded identically, with no way out short of starting a new chat.
-    task = TaskState(task_id="t1", raw="how many tracks by Nirvana", question="how many tracks by Nirvana")
-    task.pending_ambiguity = 'Nothing in this database matches "Nirvana". Which did you mean?'
-    task.pending_ambiguity_options = ["Nirvana Unplugged", "Nirvana Tribute Band"]
-    task.attempts = 2
-
-    task.reset_for_retry()
-
-    assert task.pending_ambiguity == ""
-    assert task.pending_ambiguity_options == []
-
-
-def test_reset_for_retry_resets_the_attempt_count():
-    # A task resumed after a clarification was not a failed attempt, so it should not resume
-    # with an already-exhausted repair budget.
-    task = TaskState(task_id="t1", raw="", question="")
-    task.attempts = 2
-    task.reset_for_retry()
-    assert task.attempts == 0
 
 
 def test_mislabelled_meta_task_with_entities_is_reclassified():

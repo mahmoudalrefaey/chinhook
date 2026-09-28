@@ -2,33 +2,24 @@
 
 The reasoning that used to live in this file, and separately in scripts/generator.py, now
 runs as a LangGraph workflow in the agent package. This module keeps its original job: be the
-seam the interface and the command line call, and return everything they display. The
-result keeps every key it had, so app.py's panels, the pipeline diagram, the stage labels
-and the timing line are unchanged, and adds the per-task states, the workflow trace and the
-token counts the new architecture produces.
+seam the interface and the command line call, and return everything they display, and adds
+the per-task states, the workflow trace and the token counts the workflow produces.
 
 Retrieval, SQL execution, validation and the model clients are the ones already in the
-repository: agent.nodes calls scripts.db_module and config for all of them.
+repository: agent.nodes and agent.task_graph call scripts.db_module and config for all of
+them.
 """
 
 import time
 
 import config
 from agent.graph import DEFAULT_MAX_ATTEMPTS, STAGE_TO_KEY, WorkflowError, run_turn
-from agent.nodes import (
-    STAGE_EXECUTE,
-    STAGE_GENERATE,
-    STAGE_RETRIEVE,
-    STAGE_SUMMARISE,
-    STAGE_UNDERSTAND,
-)
+from agent.nodes import STAGE_GENERATE, STAGE_SUMMARISE, STAGE_UNDERSTAND
 from agent.session import new_chat
 
 __all__ = [
     "PIPELINE",
-    "STAGE_EXECUTE",
     "STAGE_GENERATE",
-    "STAGE_RETRIEVE",
     "STAGE_SUMMARISE",
     "STAGE_TO_KEY",
     "STAGE_UNDERSTAND",
@@ -40,13 +31,14 @@ __all__ = [
 ]
 
 # The interface draws these as a row of nodes and lights each one up as it happens. The keys
-# match the keys used in the timings dictionary returned by answer().
+# match the keys used in the timings dictionary returned by answer(). Three nodes, not five:
+# retrieval, writing SQL and running it all happen inside one task's own graph, for however
+# many tasks a message became, possibly several at once, so there is no single moment that is
+# reliably "retrieving" or "executing" the way there was when one task ran at a time.
 PIPELINE = [
     {"key": "question", "title": "Question", "detail": "Plain language in"},
-    {"key": "retrieve", "title": "Retrieve", "detail": "Azure embedding, Qdrant search"},
-    {"key": "generate", "title": "Write SQL", "detail": "Azure OpenAI with a tool call"},
-    {"key": "execute", "title": "Query", "detail": "Postgres, read only"},
-    {"key": "summarise", "title": "Answer", "detail": "Azure OpenAI writes the reply"},
+    {"key": "generate", "title": "Answer it", "detail": "Retrieve, write SQL, run it, verify it"},
+    {"key": "summarise", "title": "Reply", "detail": "Azure OpenAI writes the answer"},
 ]
 
 
@@ -66,7 +58,6 @@ def _blank_result(model_name):
         "model": model_name,
         "timings": {},
         "error": None,
-        "needs_restart": False,
         "kind": "error",
         "route": "",
         "clarification": None,
@@ -86,10 +77,6 @@ def answer(question, model_name=None, on_stage=None, session=None, max_attempts=
     session is the conversation this question belongs to. Passing one keeps context across
     turns; leaving it None gives the question an empty conversation of its own, which is what
     a caller that is not holding a chat wants.
-
-    needs_restart is set when the shared database connection has been left unusable by an
-    earlier failure. Once that happens every later question fails too, and only restarting
-    the process clears it.
     """
     model_name = model_name or config.DEFAULT_MODEL
     result = _blank_result(model_name)
@@ -105,10 +92,8 @@ def answer(question, model_name=None, on_stage=None, session=None, max_attempts=
         )
     except WorkflowError as exc:
         result["error"] = str(exc)
-        result["needs_restart"] = exc.needs_restart
     except Exception as exc:  # noqa: BLE001
         result["error"] = f"{type(exc).__name__}: {exc}"
-        result["needs_restart"] = "InFailedSqlTransaction" in type(exc).__name__
 
     if not result.get("timings"):
         result["timings"] = {"total": time.perf_counter() - started}

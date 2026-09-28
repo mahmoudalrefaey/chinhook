@@ -19,13 +19,16 @@ pytestmark = [pytest.mark.integration, pytest.mark.llm]
 def test_a_real_question_after_a_greeting_is_answered_not_ignored():
     # The original bug: say hello, then ask a real question, and the classifier sometimes
     # answered the second message as though it were more small talk, with the database never
-    # touched and no sign anything had gone wrong.
+    # touched and no sign anything had gone wrong. node_route no longer asks a model to tell
+    # the two apart, but the same failure shape is still worth guarding: a real question
+    # right after a greeting must reach node_understand and get a real answer, not silently
+    # inherit the greeting route.
     session = new_chat()
     run_turn("hi there", session=session, model="gpt-4.1-mini")
     result = run_turn(
         "How many customers are from the USA?", session=session, model="gpt-4.1-mini"
     )
-    assert result.get("route") == "database"
+    assert result.get("route") == "question"
     assert result.get("ok") is True
     assert "13" in (result.get("answer") or "")
 

@@ -14,31 +14,26 @@ _UNDERSTAND_SYSTEM = (
     '  "resolved_question": "the user\'s message rewritten as one self-contained question, '
     "with any reference to earlier turns filled in\",\n"
     '  "context_notes": "how you used the conversation, or empty string",\n'
-    '  "semantic_mappings": [{"term": "word the user used", "meaning": "what it maps to"}],\n'
     '  "tasks": [{\n'
     '      "question": "one self-contained task, resolvable on its own",\n'
     '      "intent": "count|list|rank|sum|average|max|min|compare|lookup|meta|other",\n'
-    '      "entities": ["table names this task is about, using only the catalog"],\n'
-    '      "filters": [{"column_hint": "column name from the catalog", "value": "the value the user asked for"}],\n'
+    '      "entities": ["table names this task is about, using only the tables below"],\n'
+    '      "filters": [{"column_hint": "column name from the tables below", "value": "the value the user asked for"}],\n'
     '      "metrics": ["what is being measured or compared, e.g. total revenue or units sold"],\n'
-    '      "expected_limit": 5,\n'
-    '      "needs_grounding": false,\n'
-    '      "ambiguity": "",\n'
-    '      "ambiguity_kind": "value" | "entity" | "measure" | "column" | "",\n'
-    '      "ambiguity_options": ["", ""]\n'
+    '      "expected_limit": null\n'
     "  }],\n"
-    '  "clarification": {"question": "", "options": ["", ""], "reason": "", '
-    '"kind": "entity" | "measure" | "column" | "value" | ""}\n'
+    '  "clarification": {"question": "", "options": ["", ""], "reason": ""}\n'
     "}\n\n"
     "Rules:\n"
     "- First say what kind of message this is. A \"request\" is something to answer. A "
     "\"correction\" is the user telling you that you read something wrongly, that you answered "
     "the wrong thing, or that they are not asking for what you thought; the tasks are then "
-    "the request they were making, not the correction itself. An \"about_chat\" is a question "
-    "about the conversation, about you, or about what you can do.\n"
+    "the request they were making, not the correction itself, and \"the request this may be "
+    "correcting\" below, when given, is that request. An \"about_chat\" is a question about "
+    "the conversation, about you, or about what you can do.\n"
     "- A correction never becomes the question. If the user says they are not asking about "
-    "something, the thing to answer is the earlier request they were not understood to be "
-    "making. It is given to you below as the request they are referring to.\n"
+    "something, or the reply below says a previous reading was rejected, the thing to answer "
+    "is the earlier request, given to you below, not the words of the correction itself.\n"
     "- Split the message into one task per independent question. A message asking three "
     "different things gets three tasks, each of which must make sense on its own. A "
     "message with one question gets one task. A ranking with a number of rows is ONE task, "
@@ -49,62 +44,54 @@ _UNDERSTAND_SYSTEM = (
     "\"meta\", which is answered without querying anything.\n"
     "- A question about this conversation, such as what was asked first or what the assistant "
     "understood, is a task with intent \"meta\". So is a question about the shape of the "
-    "database, such as which tables or columns it has, which is answered from the catalog "
+    "database, such as which tables or columns it has, which is answered from the table names "
     "below. Neither needs a query.\n"
     "- resolved_question restates the whole message; each task restates its own share of it.\n"
-    "- Entities and column hints must be real names from the catalog below. Never invent a "
-    "table or column that is not in it.\n"
+    "- expected_limit is null unless the user's own words state a number of rows: \"top 5\", "
+    "\"the first three\", \"one album\". \"Every\", \"all\", \"list the\" and a plain \"which "
+    "genres\" all mean null, not a guessed number. A query that returns every matching row "
+    "when none was asked for is correct; one that quietly returns only a handful is wrong, "
+    "so never fill this in with a default or a typical value.\n"
+    "- Entities and column hints must be real names from the tables below. Never invent a "
+    "table or column that is not there. The full list of every table name this database has "
+    "is also given to you, separately from the detailed tables: use it only to tell whether a "
+    "concept exists anywhere at all, never as a source of column names, since it has none.\n"
     "- Resolve a reference the way a careful reader would, using the whole message rather "
     "than the clause just before it. A word like 'there', 'that', 'this', 'it', 'its', 'the "
     "same one' or 'the other' stands for an entity. Decide which entity it stands for from "
-    "the grammar of the whole message, the clauses around it, and the catalog.\n"
-    "- Do not attach a clause to the most recently mentioned table just because it was "
-    "mentioned last. If a demonstrative could plausibly point at two entities that this "
-    "message has both raised, and picking either would change the query, then that task is "
-    "ambiguous: set its ambiguity to the question to put to the user, with the candidates "
-    "in ambiguity_options, and leave the other tasks clear. A single ambiguous clause stops "
-    "only itself.\n"
-    "- Set ambiguity_kind on every ambiguity you write, saying whether it is about which "
-    "entity, which measure or which column. Leave it empty, and leave the task clear, for a "
-    "value: values are settled from the data itself further on, and asking about one here "
-    "only turns an ordinary request into two turns.\n"
-    "- If the message itself names the entity the reference points at, resolve it and ask "
+    "the grammar of the whole message, the clauses around it, and the tables below.\n"
+    "- If the message itself names the entity a reference points at, resolve it and ask "
     "nothing. Asking when the message already answered the question is a fault, not caution.\n"
     "- The user's words for a value are not assumed to be how it is stored. Put them in "
-    "filters as given, and set needs_grounding to true when a value or a vague word such as "
-    "'best-selling', 'popular' or a nationality needs mapping onto real data or a real "
-    "column before SQL can be written.\n"
-    "- clarity is 'ambiguous' only when you cannot tell what the question is about, and more "
-    "than one reading of the subject is plausible AND the readings would give different "
-    "answers. That is the case where two different entities in the catalog both fit, such as "
-    "people who could be customers or employees. Name the readings in clarification.options "
-    "using real tables from the catalog. Do not ask about a difference that cannot change the "
-    "answer, and do not ask when the catalog makes the meaning clear.\n"
+    "filters exactly as the user said them; matching them to what a column really holds "
+    "happens after this, from an index of the real values, not from you.\n"
+    "- clarity is 'ambiguous' only when you cannot tell what the whole message is about, and "
+    "more than one reading of its subject is plausible AND the readings would give different "
+    "answers, such as people who could be customers or employees. Name the readings in "
+    "clarification.options using real tables from the tables below. Do not ask about a "
+    "difference that cannot change the answer, and do not ask when the tables make the "
+    "meaning clear.\n"
     "- A word naming a nationality, a role, or a group of people is ambiguous whenever more "
-    "than one table in the catalog holds a column that would answer it AND the message does "
-    "not already say which one. Two tables of people, such as one of customers and one of "
+    "than one table below holds a column that would answer it AND the message does not "
+    "already say which one. Two tables of people, such as one of customers and one of "
     "employees, are two different answers, so ask which one when the message leaves it open. "
-    "'How many American employees?' already says, so answer it without asking. The same goes "
-    "for the value: a nationality is not a question once the table it applies to is settled, "
-    "because a column of country names has one obvious reading of it.\n"
+    "'How many American employees?' already says, so answer it without asking. A nationality "
+    "is never itself the ambiguity: which table it applies to is, and once that is settled a "
+    "column of country names has one obvious reading.\n"
     "- If any part of the message is clear and another part is not, do not make the whole "
-    "message ambiguous. Put the clear parts in tasks, and put the ambiguity on the one task "
-    "it belongs to. Use request-level clarity 'ambiguous' only when the whole message cannot "
-    "be resolved.\n"
-    "- Set kind on a request-level clarification, saying whether it is about which entity, "
-    "which measure or which column. Leave it empty, and leave the request clear, for a value: "
-    "values are looked up in the data further on, and asking about one here only turns an "
-    "ordinary request into two turns.\n"
-    "- Being unsure which measure a word means is not 'ambiguous'. If you can tell what is "
-    "being asked but a word such as 'best-selling' or 'popular' still has to be mapped onto a "
-    "real measure, leave the question clear and set needs_grounding on that task. Only a "
-    "measure that still cannot be settled later is worth interrupting the user for, and the "
-    "other tasks of the same message must not be held up waiting for the answer.\n"
+    "message ambiguous: hold the whole request only when it genuinely cannot be answered "
+    "without knowing the answer to the ambiguity.\n"
+    "- Being unsure which measure a vague word such as 'best-selling' or 'popular' means is "
+    "not 'ambiguous' by itself. Only ask when the readings are genuinely equally defensible "
+    "and would change the answer; otherwise use the conventional reading for this kind of "
+    "data and say so in context_notes.\n"
     "- clarity is 'insufficient_context' when the message cannot be understood at all without "
     "asking the user something.\n"
     "- clarity is 'unsupported' when the message, once it has been resolved against the "
-    "conversation, is about something this database does not hold, and explain why in "
-    "unsupported_reason.\n"
+    "conversation and checked against the full list of table names, is about something this "
+    "database does not hold anywhere, and explain why in unsupported_reason. A concept that "
+    "is not in the detailed tables below but is in the full name list is not unsupported: it "
+    "still gets a task, using the little the name itself tells you.\n"
     "- A message that means nothing on its own is a follow-up, not an unsupported request. "
     "'What about Germany?' says nothing until you read it against the turn before it. Read "
     "it there, resolve what it refers to, and answer that. Reserve 'unsupported' for a "
@@ -129,102 +116,6 @@ _UNDERSTAND_SYSTEM = (
 )
 
 
-_GROUND_SYSTEM = (
-    "You map how a person phrases a question onto the database schema they were given, and "
-    "onto the values the data really holds. You do not write SQL and you do not answer the "
-    "question.\n\n"
-    'Reply with one JSON object, no prose:\n'
-    '{"value_mappings": [{"term": "a word the user used for a stored value", '
-    '"value": "the stored value it means, exactly as it appears, or \\"none\\""}],\n'
-    ' "metric": "the exact measure to compute, or empty string",\n'
-    ' "ambiguity": "",\n'
-    ' "ambiguity_kind": "value" | "measure" | "entity" | "column" | "",\n'
-    ' "options": []}\n\n'
-    "Rules:\n"
-    "- Only use tables, columns and stored values that appear in the material you were given. "
-    "If you cannot ground a word against what is there, say so rather than guessing a "
-    "plausible column.\n"
-    "- Value mapping is your job, not the user's. When you are shown the values a column "
-    "really holds, map the user's word onto one of them, spelled exactly as it appears, and "
-    "put it in value_mappings. Use \"none\" only when nothing in the list means what the user "
-    "said. Never invent a value that is not in the list. A word that is not stored the way it "
-    "was said is still a mapping, not a question: the user did not have to know how it is "
-    "spelled.\n"
-    "- A word and the value that stands for it are often spelled nothing alike. A column of "
-    "places holds a place's own name, so a nationality, a demonym, an abbreviation or an "
-    "older name for a place maps to that place's entry in the list, and a shortened form of "
-    "a name maps to the full name. A person, a band or a product spelled differently in the "
-    "data maps to the entry that is the same thing. Choose that entry; do not report none "
-    "just because the letters differ.\n"
-    "- value_mappings is for values. ambiguity is for something else: which of two measures "
-    "the user means when both are supported, which entity a reference points at when the "
-    "message leaves it open, or a value that no entry in the list covers. Do not put a value "
-    "you mapped in ambiguity, and do not ask the user to confirm a mapping you have made.\n"
-    "- Money and counts of things are different measures, and the user's own words usually "
-    "say which one they mean. Words about money (sales, revenue, income, earnings, money, "
-    "price, worth, spend, turnover, takings) mean a monetary total: a price times a "
-    "quantity, or a stored total that already is one. Words about how many things (units, "
-    "quantity, copies, most played, most purchased, most streamed) mean the quantity. If "
-    "the user used a money word, compute the monetary measure and leave ambiguity empty.\n"
-    "- Leave ambiguity empty for a word that is loose on its own, such as 'best-selling' or "
-    "'most popular', when the material in front of you makes one reading clearly the "
-    "conventional one for this data. Raise it only when the readings really are equally "
-    "defensible and the answer would be different under each.\n"
-    "- A task that only lists things, with nothing to compare, count or total, needs no "
-    "measure. Leave metric and ambiguity empty for it and do not ask what should be "
-    "measured.\n"
-    "- When there is such an ambiguity, ambiguity must be the complete question to put to the "
-    "user, phrased as a question about what they asked for, with the competing readings "
-    "spelled out, and options must list those readings. Example of the shape: \"For the top "
-    "selling tracks, do you mean the most units sold or the most revenue?\" with options "
-    "[\"most units sold\", \"most revenue\"].\n"
-    "- ambiguity_kind says what the ambiguity is about: which stored value, which measure, "
-    "which entity, or which column. Use it. An ambiguity about a value that has already been "
-    "placed on a value that exists is not an ambiguity, and a \"value\" ambiguity is only "
-    "correct when the values the column holds cannot settle it.\n"
-    "- Keep the output short. It is going into another model's prompt, not into an answer."
-)
-
-
-_VALUE_CHOICE_SYSTEM = (
-    "You choose which stored value the user's word means. You are given values that are "
-    "really in the database. Answer with one of them, copied exactly, or the word none.\n\n"
-    'Reply with one JSON object, no prose:\n{"value": "one of the values, or none"}\n\n'
-    "Rules:\n"
-    "- Copy the value exactly as it is written in the list, including its spacing and case.\n"
-    "- Choose the one value that means what the user's word means, however differently the two "
-    "are spelled. A list of places holds each place's own name, so a nationality, a "
-    "demonym, an abbreviation, an older name or a shortened form maps to that place's entry. "
-    "A person, a band, a song or a product spelled differently in the data maps to the entry "
-    "that is the same thing. Different letters are a reason to look carefully, not a reason "
-    "to answer none.\n"
-    "- If nothing in the list means what the user said, answer none. Do not pick the closest "
-    "by spelling.\n"
-    "- Never ask anything and never add an explanation."
-)
-
-
-_SEMANTIC_VERIFY_SYSTEM = (
-    "You check whether a query result answers the task it was written for. The query has "
-    "already been checked for validity, safety, row limits, result shape and the right "
-    "tables. Your only job is whether the rows returned are the thing that was asked "
-    "for.\n\n"
-    'Reply with one JSON object, no prose:\n'
-    '{"verdict": "pass" | "fail", "mismatch": ""}\n\n'
-    "Rules:\n"
-    "- Pass unless the result is clearly about something else. Answer it the same way a "
-    "careful analyst would read the rows: a grouped total, a list of names, a single "
-    "number.\n"
-    "- Only fail when you can point at something in the rows that does not match the task: "
-    "the wrong kind of entity, values for a different thing, a total of a different measure. "
-    "Put that in mismatch.\n"
-    "- Never fail because the query could have been written differently, because a column "
-    "is named differently, because the wording of the task is loose, or because you would "
-    "have phrased the answer another way.\n"
-    "- Leave mismatch empty when you pass."
-)
-
-
 _GREETING_SYSTEM = (
     "You are replying to a short conversational message: a greeting, a thank you, an "
     "apology, a goodbye, or something similar that is not a question about anything.\n\n"
@@ -241,38 +132,6 @@ _GREETING_SYSTEM = (
     "to it in passing.\n"
     "- Never claim anything about the conversation that is not in what you are given."
 )
-
-_REWRITE_SYSTEM = (
-    "You rewrite one message from a user so that it means exactly one thing, with nothing "
-    "left to guess at. You are not answering it, and you are not deciding anything the user "
-    "left open.\n\n"
-    "Reply with one JSON object, no prose:\n"
-    '{"rewrite": "the message, rewritten", "resolved": ["what was made explicit"], '
-    '"ambiguity": "", "options": []}\n\n'
-    "What a rewrite does:\n"
-    "- It fills in what the user referred to but did not name: the entity from the catalog "
-    "they were talking about, the value or table they meant by a word, the part of the "
-    "previous question they are continuing.\n"
-    "- It states things they implied rather than said: which measure, which ordering, which "
-    "limit, whether a count is of rows or of a total.\n"
-    "- It makes each part of a message that asks several things stand on its own.\n"
-    "- It uses the catalog's own words for anything in the database, so a table, a column or "
-    "a stored value is named as it is actually stored.\n"
-    "- It keeps the user's intent, their wording where it is already clear, and anything that "
-    "limits the answer, such as a number or a filter.\n\n"
-    "What a rewrite must never do:\n"
-    "- Never answer the message, never guess at a value they did not give, and never pick "
-    "between readings that would give different answers.\n"
-    "- Never change what they asked about. If they asked about one entity, the rewrite is "
-    "about that entity. Changing the subject, a number, or a filter is not a rewrite.\n"
-    "- Never add a question they did not ask, and never drop one they did.\n"
-    "- Never turn small talk into a question. A message with nothing to answer is returned "
-    "unchanged.\n\n"
-    "If something in the message still cannot be resolved, put the question you would ask the "
-    "user in ambiguity, with the readings you cannot choose between in options, and leave the "
-    "rewrite covering the rest. Do not resolve it yourself."
-)
-
 
 _ANSWER_SYSTEM = (
     "You write the reply the user reads, from verified database results and nothing else. "

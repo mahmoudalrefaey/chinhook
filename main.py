@@ -72,10 +72,6 @@ def print_internal(result):
     print(f"Model Used: {result.get('model')}")
     if result.get("route"):
         print(f"Route: {result['route']}")
-    if result.get("rewrite"):
-        print(f"Rewritten to: {result['rewrite']}")
-    if result.get("rewrite_conflict"):
-        print(f"Rewrite rejected, so the original wording was used: {result['rewrite_conflict']}")
 
     for task in result.get("tasks") or []:
         state = task.get("status")
@@ -113,7 +109,8 @@ def run_cli():
         print("\nChecking index status...")
         try:
             count = run_index_check()
-            print(f"Index ready ({count} tables)\n")
+            detail = f"{count} table(s) re-indexed" if count else "already up to date"
+            print(f"Index ready ({detail})\n")
         except Exception as e:
             print(f"Index check failed: {e}\n")
 
@@ -204,10 +201,8 @@ def run_cli():
                 continue
 
             # Process natural language query. Routed through chat_engine.answer rather than
-            # calling the workflow directly, which is what the web interface already does:
-            # it is what catches a WorkflowError and sets needs_restart, and calling the
-            # workflow directly here meant that signal, and the clear message it is meant to
-            # produce, never reached anyone using the terminal.
+            # calling the workflow directly, which is what the web interface already does, so
+            # the terminal and the browser handle a failure the same way.
             print("\nProcessing...")
             try:
                 result = chat_engine.answer(user_query, current_model, session=chat)
@@ -227,12 +222,6 @@ def run_cli():
             print("=" * 60)
             if result.get("answer"):
                 print(result["answer"])
-            elif result.get("needs_restart"):
-                print(
-                    "The database session needs restarting. An earlier query left the "
-                    "shared connection in a bad state, so every question after it fails "
-                    "too. Restart this program to clear it."
-                )
             elif result.get("error"):
                 print(f"Error: {result['error']}")
             else:

@@ -124,7 +124,7 @@ def _conversation_record(session) -> str:
     return "\n".join(lines)
 
 
-def _failure_blocks(failed: list[TaskState], pending: list) -> str:
+def _failure_blocks(failed: list[TaskState]) -> str:
     """What to write when nothing verified: the tasks, and how each of them failed.
 
     The kind of failure is given as a description of what happened rather than as the raw
@@ -143,8 +143,6 @@ def _failure_blocks(failed: list[TaskState], pending: list) -> str:
             "system, table, query or error. Explain it as something that happened while "
             "answering."
         )
-    for question in pending:
-        lines.append(f"- There is a question to put to them: {question.question}")
     return "\n".join(lines)
 
 
@@ -168,31 +166,15 @@ def node_answer(state: GraphState) -> dict:
     verified = [t for t in tasks if t.status == "verified" and not _is_meta(t)]
     failed = [t for t in tasks if t.status == "failed"]
     meta = [t for t in tasks if _is_meta(t)]
-    pending_questions = list(state.get("clarifications") or [])
-    needs_clarification = [t for t in failed if t.semantic_ambiguity]
-    broken = [t for t in failed if not t.semantic_ambiguity]
 
     if not verified and not meta:
-        if pending_questions:
-            question = pending_questions[0]
-            trace = _trace(
-                state,
-                "answer",
-                "asked for clarification",
-                detail=question.question,
-            )
-            return {
-                "answer": question.question,
-                "answer_kind": "clarification",
-                "clarification": question,
-                "usage": usage,
-                "trace": trace,
-            }
-        # Nothing verified and nothing to ask. The reply is still written by the model, from
-        # the tasks and the kind of each failure. It is given the kind and not the technical
-        # reason, so a reply cannot end up quoting an error message; the reason stays in the
-        # trace, where it is readable by whoever is looking after this.
-        detail = _failure_blocks(failed, pending_questions)
+        # Nothing verified. A request this ambiguous to ask about never reaches this node at
+        # all: node_clarify ends the turn before any task runs. What is left here is only
+        # genuine failure, so the reply is written by the model from the tasks and the kind
+        # of each failure. It is given the kind and not the technical reason, so a reply
+        # cannot end up quoting an error message; the reason stays in the trace, where it is
+        # readable by whoever is looking after this.
+        detail = _failure_blocks(failed)
         text, spent = llm.chat_text(
             model, _ANSWER_SYSTEM, detail, max_completion_tokens=600
         )
@@ -221,17 +203,6 @@ def node_answer(state: GraphState) -> dict:
     blocks = [
         f"Original request: {state.get('raw_question') or state.get('original_question') or state['question']}"
     ]
-    if state.get("rewrite"):
-        blocks.append(
-            f"Read as, the same intent made explicit: {state['rewrite']}\n"
-            "Answer the original request. The reading above is only there so you name the "
-            "interpretation you used when it matters."
-        )
-    if state.get("rewrite_conflict"):
-        blocks.append(
-            f"A rewrite of this request was rejected because {state['rewrite_conflict']}, so "
-            "the original wording above is what is being answered."
-        )
     for index, task in enumerate(verified, start=1):
         shape = "single value" if task.row_count <= 1 else f"{task.row_count} row(s)"
         payload: dict[str, Any] = {
@@ -259,13 +230,7 @@ def node_answer(state: GraphState) -> dict:
                 "the total."
             )
         blocks.append(f"Verified result {index}:\n{json.dumps(payload, ensure_ascii=False, default=str)}")
-    for task in needs_clarification:
-        blocks.append(
-            f"Task awaiting an answer from the user: {task.question or task.raw}. "
-            f"Put this question to the user, word for word, at the end of your reply: "
-            f"{task.semantic_ambiguity}"
-        )
-    for task in broken:
+    for task in failed:
         # Only the kind of failure goes to the reply, so an exception or a database message
         # cannot be quoted back to the user as if it were an explanation. The reason itself
         # is in the trace, where it belongs.
@@ -312,8 +277,8 @@ def node_answer(state: GraphState) -> dict:
     )
     usage.add(spent)
     text = _ensure_every_result_is_reported(text, verified)
-    kind = "partial" if failed or pending_questions else "answer"
-    payload: dict[str, Any] = {
+    kind = "partial" if failed else "answer"
+    return {
         "answer": text,
         "answer_kind": kind,
         "usage": usage,
@@ -321,13 +286,8 @@ def node_answer(state: GraphState) -> dict:
             state,
             "answer",
             "written",
-            detail=f"{len(verified)} verified, {len(broken)} failed, "
-                   f"{len(needs_clarification)} awaiting an answer from the user",
+            detail=f"{len(verified)} verified, {len(failed)} failed",
             tasks=[t.task_id for t in verified],
-            failed_tasks=[t.task_id for t in broken],
-            clarification_tasks=[t.task_id for t in needs_clarification],
+            failed_tasks=[t.task_id for t in failed],
         ),
     }
-    if pending_questions:
-        payload["clarification"] = pending_questions[0]
-    return payload
