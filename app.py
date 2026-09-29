@@ -460,7 +460,10 @@ with st.sidebar:
 
 
 # ---------- header ----------
-
+# width="stretch" already fills the page's real content column (960px inside
+# stMainBlockContainer's own 80px side padding, same as every bubble and the tab bar): the
+# image's native resolution is 960x269, so there was never a width to fix here. Capping the
+# height it renders at, in styles.css, is the only override actually needed.
 banner = ROOT / "assets/banner.png"
 if banner.exists():
     st.image(str(banner), width="stretch")
@@ -471,124 +474,167 @@ chat_tab, compare_tab, schema_tab, index_tab = st.tabs(["Chat", "Compare models"
 # ---------- chat ----------
 
 with chat_tab:
-    st.markdown('<div class="page-title">Ask the database a question</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="page-subtitle">Questions are turned into SQL, run against the Chinook '
-        "database, and answered in plain language. Every answer carries the tables that were "
-        "searched and the query that ran.</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
-
-    if not st.session_state.messages and not st.session_state.pending:
-        st.markdown(pipeline_html(), unsafe_allow_html=True)
-        st.markdown('<div class="panel-label">Try one of these</div>', unsafe_allow_html=True)
-        left, right = st.columns(2)
-        for position, example in enumerate(EXAMPLE_QUESTIONS):
-            target = left if position % 2 == 0 else right
-            if target.button(example, key=f"example_{position}"):
-                st.session_state.pending = example
-                st.rerun()
-
-    for index, message in enumerate(st.session_state.messages):
-        if message["role"] == "user":
-            st.markdown(
-                bubble("user", text_to_html(message["content"]), index),
-                unsafe_allow_html=True,
-            )
-        else:
-            if message.get("failed"):
-                render_failure(message["result"])
-            else:
-                st.markdown(
-                    bubble("assistant", text_to_html(message["content"]), index),
-                    unsafe_allow_html=True,
-                )
-                if message.get("result"):
-                    render_detail(message["result"])
-                    # A question with options to choose from is also offered as controls,
-                    # so it can be answered with a click instead of by typing.
-                    render_clarification_controls(index, message["result"])
-
+    # Read before anything else in this tab is drawn, not after, so a question submitted this
+    # run is already known both to the welcome copy below (which a submitted question hides,
+    # immediately, the same run it was asked rather than one rerun later) and to the
+    # conversation panel further down, whose own live "thinking" and streamed-answer
+    # placeholders can then be created inside that panel too, right after the history, instead
+    # of falling outside it lower down the script. st.chat_input still has to be called as its
+    # own top-level element here (Streamlit does not allow it inside a bounded container), but
+    # position: fixed in styles.css docks it to the same screen position regardless of where
+    # in the DOM it was actually written.
     question = st.chat_input("Ask about customers, tracks, albums, invoices and more")
-
     if st.session_state.pending:
         question = st.session_state.pending
         st.session_state.pending = None
 
-    if question:
-        allowed, notice = rate_limit.check(st.session_state.rate_bucket)
-        if not allowed:
-            # Checked before the question is added to history at all, so a refused question
-            # is not shown as though it were asked and never answered.
-            st.markdown(f'<div class="notice">{escape_text(notice)}</div>', unsafe_allow_html=True)
-        else:
-            index = len(st.session_state.messages)
-            st.session_state.messages.append({"role": "user", "content": question})
-            st.markdown(bubble("user", text_to_html(question), index), unsafe_allow_html=True)
-
-            diagram = st.empty()
-            slot = st.empty()
-            answer_slot = st.empty()
-            finished = ["question"]
-            streamed = []
-
-            def advance(label):
-                key = chat_engine.STAGE_TO_KEY.get(label)
-                diagram.markdown(
-                    pipeline_html(active=key, completed=list(finished)),
-                    unsafe_allow_html=True,
-                )
-                slot.markdown(thinking(label), unsafe_allow_html=True)
-                if key:
-                    finished.append(key)
-
-            def on_token(chunk):
-                # The reply has started arriving, so the "thinking" indicator for the answer
-                # stage has nothing left to say that the words themselves don't already.
-                slot.empty()
-                streamed.append(chunk)
-                answer_slot.markdown(
-                    bubble("assistant", text_to_html("".join(streamed)), "live"),
-                    unsafe_allow_html=True,
-                )
-
-            diagram.markdown(pipeline_html(completed=finished), unsafe_allow_html=True)
-            result = chat_engine.answer(
-                question, model, on_stage=advance, on_token=on_token, session=chat_session()
+    # The welcome copy is only useful before there is anything to scroll to yet; once a real
+    # conversation exists it is just permanently-fixed header space the messages below it
+    # never get back. Clearing the conversation empties st.session_state.messages, which is
+    # what brings it back rather than some separate flag to keep in sync with that.
+    #
+    # A plain conditional st.markdown is not enough to make it disappear the moment a question
+    # is submitted: chat_engine.answer() below blocks for several seconds, and Streamlit only
+    # removes an element a conditional skipped once the whole script run finishes, not as the
+    # run reaches the point that skipped it. For a run this long, "finishes" is seconds away,
+    # so the welcome copy (and, further down, the example panel) stayed on screen, stale,
+    # right through the run that was supposed to hide it - the "two pipelines at once" and
+    # leftover subtitle text this was seen as. st.empty() is exactly the escape hatch already
+    # in use for the diagram and "thinking" text below: writing to (or clearing) an empty()
+    # placeholder sends its own update immediately, mid-script, rather than waiting for the
+    # run to end, which is what actually makes it disappear on the same run it was submitted.
+    welcome = st.empty()
+    if not st.session_state.messages and not question:
+        with welcome.container():
+            st.markdown('<div class="page-title">Ask the database a question</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="page-subtitle">Questions are turned into SQL, run against the '
+                "Chinook database, and answered in plain language. Every answer carries the "
+                "tables that were searched and the query that ran.</div>",
+                unsafe_allow_html=True,
             )
-            diagram.empty()
-            slot.empty()
-            # Saved regardless of whether the turn succeeded: a failed turn, or one still
-            # waiting on a clarification, is exactly the state a restart should not erase.
-            _save_chat_session()
+            st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+    else:
+        welcome.empty()
 
-            if result["ok"] and result.get("answer"):
-                if not streamed:
-                    # Nothing streamed: a greeting or a clarification is written outside the
-                    # node that streams, so the whole reply arrives at once instead.
-                    answer_slot.markdown(
-                        bubble("assistant", text_to_html(result["answer"]), "live"),
+    # The scrollable "window": everything that grows with the conversation lives in here, so
+    # it is the only thing that scrolls. The title above and the input below never move.
+    #
+    # Known gap: once the conversation is long enough to overflow, a fresh answer does not
+    # scroll into view on its own - st.container's own autoscroll only takes effect on a
+    # fixed pixel height, not height="stretch", which is what the whole responsive shell here
+    # depends on (confirmed directly: sampled scrollTop 20 times through a new answer with
+    # autoscroll=True set and it never moved). Fixing that for real needs custom JS reaching
+    # into the parent page from a components.v1.html iframe, which is a real addition rather
+    # than a CSS fix, so it was left alone rather than added unprompted.
+    with st.container(height="stretch", border=False, key="conversation_window"):
+        hero = st.empty()
+        if not st.session_state.messages and not question:
+            with hero.container():
+                st.markdown(pipeline_html(), unsafe_allow_html=True)
+                st.markdown('<div class="panel-label">Try one of these</div>', unsafe_allow_html=True)
+                left, right = st.columns(2)
+                for position, example in enumerate(EXAMPLE_QUESTIONS):
+                    target = left if position % 2 == 0 else right
+                    if target.button(example, key=f"example_{position}"):
+                        st.session_state.pending = example
+                        st.rerun()
+        else:
+            hero.empty()
+
+        for index, message in enumerate(st.session_state.messages):
+            if message["role"] == "user":
+                st.markdown(
+                    bubble("user", text_to_html(message["content"]), index),
+                    unsafe_allow_html=True,
+                )
+            else:
+                if message.get("failed"):
+                    render_failure(message["result"])
+                else:
+                    st.markdown(
+                        bubble("assistant", text_to_html(message["content"]), index),
                         unsafe_allow_html=True,
                     )
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": result["answer"],
-                    "result": result,
-                })
-            else:
-                answer_slot.empty()
-                render_failure(result)
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": "",
-                    "failed": True,
-                    "result": result,
-                })
+                    if message.get("result"):
+                        render_detail(message["result"])
+                        # A question with options to choose from is also offered as controls,
+                        # so it can be answered with a click instead of by typing.
+                        render_clarification_controls(index, message["result"])
 
-            # Redraw everything from stored state so the streamed message and the stored one
-            # do not both survive, which would show the detail panel twice.
-            st.rerun()
+        if question:
+            allowed, notice = rate_limit.check(st.session_state.rate_bucket)
+            if not allowed:
+                # Checked before the question is added to history at all, so a refused
+                # question is not shown as though it were asked and never answered.
+                st.markdown(f'<div class="notice">{escape_text(notice)}</div>', unsafe_allow_html=True)
+            else:
+                index = len(st.session_state.messages)
+                st.session_state.messages.append({"role": "user", "content": question})
+                st.markdown(bubble("user", text_to_html(question), index), unsafe_allow_html=True)
+
+                diagram = st.empty()
+                slot = st.empty()
+                answer_slot = st.empty()
+                finished = ["question"]
+                streamed = []
+
+                def advance(label):
+                    key = chat_engine.STAGE_TO_KEY.get(label)
+                    diagram.markdown(
+                        pipeline_html(active=key, completed=list(finished)),
+                        unsafe_allow_html=True,
+                    )
+                    slot.markdown(thinking(label), unsafe_allow_html=True)
+                    if key:
+                        finished.append(key)
+
+                def on_token(chunk):
+                    # The reply has started arriving, so the "thinking" indicator for the
+                    # answer stage has nothing left to say that the words themselves don't.
+                    slot.empty()
+                    streamed.append(chunk)
+                    answer_slot.markdown(
+                        bubble("assistant", text_to_html("".join(streamed)), "live"),
+                        unsafe_allow_html=True,
+                    )
+
+                diagram.markdown(pipeline_html(completed=finished), unsafe_allow_html=True)
+                result = chat_engine.answer(
+                    question, model, on_stage=advance, on_token=on_token, session=chat_session()
+                )
+                diagram.empty()
+                slot.empty()
+                # Saved regardless of whether the turn succeeded: a failed turn, or one still
+                # waiting on a clarification, is exactly the state a restart should not erase.
+                _save_chat_session()
+
+                if result["ok"] and result.get("answer"):
+                    if not streamed:
+                        # Nothing streamed: a greeting or a clarification is written outside
+                        # the node that streams, so the whole reply arrives at once instead.
+                        answer_slot.markdown(
+                            bubble("assistant", text_to_html(result["answer"]), "live"),
+                            unsafe_allow_html=True,
+                        )
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": result["answer"],
+                        "result": result,
+                    })
+                else:
+                    answer_slot.empty()
+                    render_failure(result)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": "",
+                        "failed": True,
+                        "result": result,
+                    })
+
+                # Redraw everything from stored state so the streamed message and the stored
+                # one do not both survive, which would show the detail panel twice.
+                st.rerun()
 
 
 # ---------- model comparison ----------
@@ -604,13 +650,12 @@ with compare_tab:
     )
     st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
 
-    asked = st.text_input(
-        "Question",
-        value="What are the top 5 selling tracks?",
-        label_visibility="collapsed",
-    )
+    # A fixed chat_input at the bottom instead of a text_input near the top plus a separate
+    # "Run" button, so asking a second question here works the same way it does on the Chat
+    # tab: type, press Enter, no need to scroll back up to reach the question field again.
+    asked = st.chat_input("Ask a question to compare across both models", key="compare_input")
 
-    if st.button("Run on both models", type="primary", key="run_compare"):
+    if asked:
         allowed, notice = rate_limit.check(st.session_state.rate_bucket)
         if not allowed:
             st.markdown(f'<div class="notice">{escape_text(notice)}</div>', unsafe_allow_html=True)
