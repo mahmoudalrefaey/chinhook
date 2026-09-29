@@ -100,8 +100,10 @@ def _require_passphrase() -> bool:
     entered = st.text_input("Passphrase", type="password", label_visibility="collapsed")
     if st.button("Enter", type="primary"):
         # compare_digest rather than ==, so how long the comparison takes does not itself
-        # leak how many of the passphrase's characters were guessed correctly.
-        if secrets.compare_digest(entered, config.APP_PASSPHRASE):
+        # leak how many of the passphrase's characters were guessed correctly. Encoded to
+        # bytes first: compare_digest refuses two str arguments outright unless both are
+        # pure ASCII, and a passphrase is not guaranteed to be one, in any language.
+        if secrets.compare_digest(entered.encode("utf-8"), config.APP_PASSPHRASE.encode("utf-8")):
             st.session_state.authenticated = True
             st.rerun()
         else:
