@@ -284,6 +284,11 @@ class Turn:
     tasks: list[dict[str, Any]] = field(default_factory=list)
     tables: list[str] = field(default_factory=list)
     answer: str = ""
+    # True when this turn ended by asking the user something rather than answering: question
+    # and tasks here are a guess at what the ambiguity might resolve to, not something the
+    # user actually confirmed. A later turn's own follow-up logic needs to tell the two apart,
+    # since a guess and a confirmed reading read identically as plain text otherwise.
+    unresolved: bool = False
 
 
 @dataclass

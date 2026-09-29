@@ -85,6 +85,13 @@ def _settled_by_the_conversation(session, question: str, options: list[str]) -> 
     """
     if not question or not options or not session.turns:
         return False
+    if session.turns[-1].unresolved:
+        # The last turn ended by asking something itself, and its own resolved_question and
+        # tasks are a guess at what that ambiguity might resolve to, not a confirmed reading -
+        # "which genre sells the most" guessing both revenue and units sold before asking is
+        # exactly the kind of text this function would otherwise match a later clarification's
+        # own options against, making it look chosen when nobody ever chose anything.
+        return False
     previous = " ".join(
         [session.turns[-1].question]
         + [task.get("question", "") for task in session.turns[-1].tasks]
@@ -114,14 +121,25 @@ def node_understand(state: GraphState) -> dict:
     original = state.get("original_question") or ""
     question = original if original else state["question"]
     raw = state.get("raw_question") or question
+    previous = session.turns[-1] if session.turns else None
 
-    schema_text, retrieved_names = schema_store.retrieve_for_message(question)
+    # A message with barely any content of its own ("what about Germany?") carries almost
+    # nothing for the schema search below to match against, even though the model reading it
+    # a few lines down has the previous turn available and resolves it correctly anyway. The
+    # search and the model are not the same step: folding the previous turn's own resolved
+    # question into the text searched on, only for this kind of thin, reference-only message,
+    # gives that search something real to match rather than three words. Skipped entirely
+    # while resuming a clarification, which already has its own handling below.
+    retrieval_text = question
+    if not resumed_answer and previous is not None and len(_content_words(raw)) <= 2:
+        retrieval_text = f"{previous.question} {question}"
+
+    schema_text, retrieved_names = schema_store.retrieve_for_message(retrieval_text)
     table_names = schema_store.table_names_text()
-    value_hits = schema_store.search_values_for(question)
+    value_hits = schema_store.search_values_for(retrieval_text)
 
     context = session.context_summary()
     last_clarification = session.clarification_history[-1]["question"] if session.clarification_history else ""
-    previous = session.turns[-1] if session.turns else None
     recovered_turn = _last_answered_request(session)
 
     parts = [f"Tables retrieved as relevant to this message:\n{schema_text or '(none matched)'}"]
@@ -256,6 +274,19 @@ def node_understand(state: GraphState) -> dict:
                     reason=str(spec.get("reason") or ""),
                     original_question=question,
                 )
+
+        if clarification is not None:
+            # Nothing here was actually run or confirmed - these are a guess at what the
+            # ambiguity might resolve to, offered instead of running them. Recording the guess
+            # as though it were this turn's real tasks let a later turn's own clarification
+            # look already settled purely because the guess happened to use the same words
+            # the new question is asking about, without the user ever picking one: "which
+            # genre sells the most?" guessed both revenue and units sold before asking, and
+            # that was enough for "what about the least?" to skip asking and silently answer
+            # both ways too. _last_answered_request already guards the same class of bug by
+            # only trusting a task that has a real answer_summary; this is that same guard,
+            # applied where the guess is created instead of where the damage shows up.
+            tasks = []
 
         understanding = Understanding(
             kind=kind,  # type: ignore[arg-type]

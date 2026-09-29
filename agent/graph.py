@@ -347,7 +347,7 @@ def _result_from_state(
     if kind == "clarification":
         result["error"] = None
 
-    session.record_turn(_turn_from(question, state, tasks, answer or ""))
+    session.record_turn(_turn_from(question, state, tasks, answer or "", kind == "clarification"))
     return result
 
 
@@ -358,7 +358,9 @@ def _clarification_payload(state: dict) -> Optional[dict[str, Any]]:
     return clarification.as_dict()
 
 
-def _turn_from(question: str, state: dict, tasks: list[TaskState], answer: str) -> Turn:
+def _turn_from(
+    question: str, state: dict, tasks: list[TaskState], answer: str, unresolved: bool = False
+) -> Turn:
     understanding = state.get("understanding")
     summaries = []
     for task in tasks:
@@ -384,4 +386,5 @@ def _turn_from(question: str, state: dict, tasks: list[TaskState], answer: str) 
         tasks=summaries,
         tables=sorted({name for task in tasks for name in task.schema_tables}),
         answer=answer[:400],
+        unresolved=unresolved,
     )
