@@ -42,6 +42,19 @@ def test_statement_limit_and_referenced_tables_and_group_by():
     assert v.has_group_by('SELECT COUNT(*) FROM "customer"') is False
 
 
+def test_referenced_tables_excludes_the_querys_own_cte_names():
+    # A CTE's name is not a table the query reads from the database, however the rest of the
+    # query goes on to reference it; sqlglot represents both the same way (an exp.Table
+    # node), so this used to report the CTE's own name as an unknown table and reject an
+    # otherwise valid query.
+    sql = (
+        'WITH "spend" AS (SELECT "customer_id", SUM("total") AS "t" FROM "invoice" '
+        'GROUP BY "customer_id") '
+        'SELECT "customer_id" FROM "spend" WHERE "t" > 10'
+    )
+    assert set(v.referenced_tables(sql)) == {"invoice"}
+
+
 def _task(**kwargs):
     defaults = dict(task_id="t1", raw="", question="")
     defaults.update(kwargs)

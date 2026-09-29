@@ -80,15 +80,23 @@ def statement_limit(sql: Optional[str]) -> Optional[int]:
 
 
 def tables_in(expression) -> list[str]:
-    """Table names an already-parsed query reads.
+    """Table names an already-parsed query reads from the database itself.
 
     A schema-qualified table is reported with its schema, because a name that says which
     schema it is in says something a bare name does not. Split out from referenced_tables so
     a caller that has already parsed the query, such as the task graph's own validity check,
     reads the same tree it just built rather than paying for a second parse of the same SQL.
+
+    A name the query defines for itself in a WITH clause is not a table read from the
+    database, however the query goes on to reference it, and sqlglot represents both the same
+    way (an exp.Table node), so those names are excluded here rather than left for every
+    caller to filter out on its own.
     """
+    cte_names = {cte.alias_or_name for cte in expression.find_all(sqlglot.exp.CTE)}
     names = []
     for table in expression.find_all(sqlglot.exp.Table):
+        if not table.db and table.name in cte_names:
+            continue
         name = f"{table.db}.{table.name}" if table.db else table.name
         names.append(name)
     return names
