@@ -39,19 +39,12 @@ def catalog() -> dict[str, list[tuple[str, str]]]:
     """Table name -> [(column, type)], introspected and cached for a few minutes at a time.
 
     The query understanding node is given this so it can ground an entity against real
-    columns instead of guessing at them. It is cheap, deterministic, and never invented. A
-    failed introspection returns an empty catalog rather than failing the turn: the schema a
-    task retrieves later still reaches the model, and a blip in a read is not a reason to
-    turn away a question.
-
-    A failure is remembered only for a short cooldown, not forever. One outage used to set a
-    flag with no way back, and once it was set every question for the rest of that process
-    was told the database had no tables at all, whether or not the outage had already passed.
-
-    The result itself expires after a few minutes rather than living for the process's whole
-    life: a table added, dropped or renamed outside this process (a migration, a restore)
-    used to be invisible to every question until the app restarted, silently rejecting valid
-    queries against tables that really exist.
+    columns instead of guessing at them. Cached with a TTL rather than for the process's
+    whole life, so a table added, dropped or renamed outside this process (a migration, a
+    restore) is seen again soon rather than only after a restart. A failed introspection
+    returns an empty catalog and remembers the failure only for a short cooldown: a blip in
+    one read should not turn away every question for the rest of the process, however long it
+    runs.
     """
     global _catalog_cache, _catalog_cached_at, _catalog_last_failure, _index_cache
     if _catalog_cache is not None and (time.monotonic() - _catalog_cached_at) < _CATALOG_TTL_SECONDS:
