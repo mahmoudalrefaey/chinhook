@@ -67,3 +67,30 @@ def test_a_grouped_count_question_is_answered_not_reported_as_a_failure():
     assert result.get("ok") is True
     assert result.get("kind") == "answer"
     assert (result.get("rows") or [])
+
+
+def test_a_plain_question_costs_three_model_calls():
+    # The number the whole graph rewrite was for: understand, write the SQL, write the
+    # answer. Down from six to eight in the graph this replaced.
+    session = new_chat()
+    result = run_turn(
+        "How many customers are from the USA?", session=session, model="gpt-4.1-mini"
+    )
+    assert result.get("ok") is True
+    assert result.get("usage", {}).get("llm_calls") == 3
+
+
+def test_a_clarification_answer_resumes_the_original_request():
+    # The whole point of moving to one request-level clarification: a word naming a group of
+    # people that exists in more than one table (customer and employee both hold a country)
+    # holds the turn instead of guessing, and the reply that follows is read as the answer to
+    # that question, not as a new request of its own.
+    session = new_chat()
+    asked = run_turn("How many Americans are there?", session=session, model="gpt-4.1-mini")
+    assert asked.get("kind") == "clarification"
+    assert asked.get("clarification")
+
+    resumed = run_turn("customers", session=session, model="gpt-4.1-mini")
+    assert resumed.get("ok") is True
+    assert resumed.get("kind") == "answer"
+    assert "13" in (resumed.get("answer") or "")
