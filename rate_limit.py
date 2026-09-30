@@ -1,11 +1,11 @@
 """How many questions one browser session, and the app as a whole, may answer per minute.
 
-Deliberately not wired into the command line: the terminal is one trusted person on their own
-machine, and there is no aggregate budget to protect them from. The concern this exists for is
-a public Streamlit link with no other access control, where anyone who finds it can ask the
-model as many questions as they like and spend whatever the Azure budget behind it allows.
-Framework agnostic on purpose, so it is testable without Streamlit running at all: app.py
-holds one bucket per session in st.session_state and calls check() with it.
+Every visitor pays for their own model calls with their own key, but every question still
+costs this server real work: embeddings, database connections, a slot in the agent's thread
+pool. On a public link with no other access control, one session asking in a tight loop would
+slow the app down for everyone else, which is what these limits prevent. Framework agnostic
+on purpose, so it is testable without Streamlit running at all: app.py holds one bucket per
+session in st.session_state and calls check() with it.
 """
 
 from __future__ import annotations

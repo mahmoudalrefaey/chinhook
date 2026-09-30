@@ -1,7 +1,6 @@
-# The web interface only. Qdrant and Postgres are separate services (see docker-compose.yml),
-# reached over the network by URL, the same way a hosted deployment reaches them; nothing
-# about this image is specific to either of them. Embeddings come from an Azure OpenAI
-# deployment, so there is no local embedding model or service to bring up here either.
+# The web app. Qdrant is a separate service reached by URL (see docker-compose.yml and
+# docs/DEPLOYMENT.md), and each visitor's database and model are reached by whatever they
+# enter on the setup screen, so nothing about this image is specific to any of them.
 
 FROM python:3.12-slim
 
@@ -11,14 +10,23 @@ RUN apt-get update \
 
 RUN curl -fsSL https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    FASTEMBED_CACHE_PATH=/app/.cache/fastembed \
+    HF_HUB_DISABLE_TELEMETRY=1
 
 WORKDIR /app
 
 # Dependencies before source, so an ordinary code change does not invalidate the layer that
 # installs everything: only a change to these two files does.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
+RUN uv sync --frozen --no-dev
+
+# The embedding model runs in-process. Downloading it here, at build time, means a fresh
+# container answers its first question without first fetching the model from the internet.
+# Setting a different EMBED_MODEL at run time still works; that model is fetched on first use.
+ARG EMBED_MODEL=BAAI/bge-small-en-v1.5
+ENV EMBED_MODEL=${EMBED_MODEL}
+RUN /app/.venv/bin/python -c "import os; from fastembed import TextEmbedding; TextEmbedding(os.environ['EMBED_MODEL'], cache_dir=os.environ['FASTEMBED_CACHE_PATH'])"
 
 COPY . .
 
@@ -28,14 +36,13 @@ USER appuser
 
 # The default this binds to when $PORT is not set by the platform running this image. EXPOSE
 # is image metadata only: Railway (and any platform that injects $PORT) routes to whatever
-# port the process actually listens on regardless of this line, and Docker cannot make a
-# build-time declaration track a value only known when the container is started, so this
-# stays accurate for the common case rather than attempting something Docker has no way to
-# express.
+# port the process actually listens on regardless of this line.
 EXPOSE 8501
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS "http://localhost:${PORT:-8501}/_stcore/health" || exit 1
+
 # tini as PID 1 rather than the shell directly: it forwards signals and reaps anything left
-# orphaned, neither of which a plain shell does, and neither of which "docker stop" or a
-# crash-restart can be relied on to get right without it.
+# orphaned, neither of which a plain shell does.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sh", "-c", "exec /app/.venv/bin/streamlit run app.py --server.port \"${PORT:-8501}\" --server.address 0.0.0.0 --server.headless true"]

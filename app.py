@@ -1,4 +1,4 @@
-"""Web interface for asking the Chinook database questions in plain language.
+"""Web interface for asking a connected database questions in plain language.
 
 Run it with the command in the "Getting started" section of README.md.
 

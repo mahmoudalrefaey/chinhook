@@ -2,4 +2,8 @@
 __pycache__
 **/__pycache__
 .git
+.github
 .env
+tests
+.pytest_cache
+.ruff_cache

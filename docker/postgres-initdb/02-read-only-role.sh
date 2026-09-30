@@ -1,7 +1,7 @@
 #!/bin/bash
-# Creates the read-only role docs/READ_ONLY_ROLE.md describes, so a database brought up
-# through this compose file already has the guarantee the query path relies on, without a
-# manual step. Runs only when this container is initializing a fresh data directory, the
+# Creates a read-only login for the sample database, so connecting to it from the app's
+# setup screen works with a login that can only read, the way the app recommends connecting
+# to any database. Runs only when this container is initializing a fresh data directory, the
 # same as every other script in docker-entrypoint-initdb.d.
 set -euo pipefail
 

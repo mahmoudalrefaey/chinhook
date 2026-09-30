@@ -1,4 +1,4 @@
-"""LangGraph agentic workflow for the Chinook natural-language database chat.
+"""LangGraph agentic workflow for Chinhook, the natural-language database chat.
 
 The modules here sit on top of the rest of the repository: the model through agent.llm, and
 schema retrieval, SQL validation and execution through scripts.db. Every call works on the

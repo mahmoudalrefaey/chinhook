@@ -1,0 +1,4 @@
+# Shell scripts are run inside Linux containers, where a CRLF line ending turns the shebang
+# into "/bin/bash\r" and the script into "cannot execute: required file not found". Checked
+# out with LF everywhere, including on Windows with core.autocrlf set.
+*.sh text eol=lf

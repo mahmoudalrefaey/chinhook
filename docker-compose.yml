@@ -1,35 +1,39 @@
-# Each service on its own, reached by URL through the same environment variables a hosted
-# deployment would set. Nothing here is nested inside another service's container.
+# Local development: Qdrant and the app, each in its own container, reached by URL the same
+# way a hosted deployment reaches them. Then open http://localhost:8501 and connect a database
+# and a model on the setup screen.
 #
-# DATABASE_URL in .env is expected to point at wherever Postgres already lives. To also run a
-# local Postgres for development, with the Chinook schema and read-only role already set up,
-# layer docker-compose.local-db.yml on top:
+# To also run a sample database to connect to (PostgreSQL with the Chinook dataset and a
+# read-only login already set up), layer docker-compose.local-db.yml on top:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.local-db.yml up
 #
-# That file is what points DATABASE_URL at the local database instead: a plain profile is not
-# enough for this, since the app and indexer containers reach Postgres over the compose
-# network by service name ("postgres"), not by "localhost", which is what .env's DATABASE_URL
-# says for every other way of running this project.
-#
-# Embeddings come from an Azure OpenAI deployment (AZURE_EMBEDDING_KEY/ENDPOINT in .env), not
-# from a local model, so there is no embedding service here to bring up or wait on.
+# A database on this machine itself is reached from inside the app container as
+# host.docker.internal, not localhost, which inside the container means the container.
 
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.19.1
     ports:
-      - "6333:6333"
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
     volumes:
       - qdrant-data:/qdrant/storage
 
   app:
     build: .
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       QDRANT_URL: http://qdrant:6333
+      # The port the app listens on inside the container; the host port is set below.
+      PORT: "8501"
+      # Local development only: lets the app connect to a database on this machine or in
+      # this compose network. Never set this on a public deployment (see config.py).
+      ALLOW_PRIVATE_HOSTS: "true"
     ports:
-      - "${PORT:-8501}:8501"
+      - "127.0.0.1:${APP_PORT:-8501}:8501"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       qdrant:
         condition: service_started
