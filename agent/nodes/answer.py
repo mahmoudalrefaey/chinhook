@@ -77,22 +77,26 @@ def _cell(value) -> str:
     return "" if value is None else str(value).replace("|", "\\|")
 
 
-def _format_result(task: TaskState) -> str:
+def _format_result(task: TaskState, include_heading: bool = True) -> str:
     """A readable rendering of one verified result, built only from what was verified.
 
-    Markdown, like the replies it is appended to, so it is styled the same way. This is the
-    safety net for a reply that left a verified result out, not the normal path.
+    Markdown, like the replies it is appended to, so it is styled the same way. With
+    include_heading (the default), this is the safety net for a reply that left a verified
+    result out entirely. With it off, this is just the table on its own: the heading and the
+    sentence introducing it were the model's own to write, for a result too large to have it
+    also hand-write every row (see table_supplied_separately in node_answer below); only the
+    exact, verified rows are ever built here, in both cases.
     """
     heading = task.question or task.raw
     if task.row_count == 1 and task.rows:
         value = task.rows[0][0]
-        line = f"### {heading}\n\n**{value}**"
+        line = f"**{value}**"
         if len(task.rows[0]) > 1:
             line += " (" + ", ".join(
                 f"{column}: {cell}" for column, cell in zip(task.columns, task.rows[0], strict=True) if column
             ) + ")"
-        return line
-    lines = [f"### {heading}", ""]
+        return f"### {heading}\n\n{line}" if include_heading else line
+    lines = [f"### {heading}", ""] if include_heading else []
     if task.row_count == 0:
         lines.append("The query ran and returned no rows.")
         return "\n".join(lines)
@@ -206,6 +210,16 @@ def node_answer(state: GraphState) -> dict:
     blocks = [
         f"Original request: {state.get('raw_question') or state.get('original_question') or state['question']}"
     ]
+    # A result with more than one row gets its table appended after the model's own text
+    # (see the loop that builds `appended_tables` below), built from the verified rows
+    # directly rather than hand-written, which is what actually saves the cost: writing out
+    # a table is real, unavoidable output tokens per row, spent on data the model is only
+    # ever copying, not reasoning about. Dropping "rows" from its payload here is not just
+    # tidiness, it is the other half of that saving - there is nothing left for a 500-row
+    # result to spend input tokens on either, only the columns and count needed to introduce
+    # it. A single-value result stays exactly as before: one number is cheap to write and
+    # reads better as the model's own sentence than as a one-row table appended after it.
+    table_supplied = {task.task_id for task in verified if task.row_count > 1}
     for index, task in enumerate(verified, start=1):
         shape = "single value" if task.row_count <= 1 else f"{task.row_count} row(s)"
         payload: dict[str, Any] = {
@@ -213,9 +227,12 @@ def node_answer(state: GraphState) -> dict:
             "intent": task.intent,
             "columns": task.columns,
             "row_count": task.row_count,
-            "rows": [list(r) for r in task.rows[:50]],
             "result_shape": shape,
         }
+        if task.task_id in table_supplied:
+            payload["table_supplied_separately"] = True
+        else:
+            payload["rows"] = [list(r) for r in task.rows[:50]]
         if task.semantic:
             payload["measure"] = task.semantic
         if task.metrics:
@@ -226,7 +243,10 @@ def node_answer(state: GraphState) -> dict:
             ]
         if task.verification_notes:
             payload["note"] = task.verification_notes
-        if task.truncated:
+        # The truncation note moves with the table: the appended table (built from
+        # _format_result, which already covers this) is the one place that still needs to
+        # say so once the model itself is not the one writing the table anymore.
+        if task.truncated and task.task_id not in table_supplied:
             payload["truncated"] = (
                 f"more than {task.row_count} rows matched; only the first "
                 f"{task.row_count} are shown. Say so plainly rather than stating this as "
@@ -273,12 +293,24 @@ def node_answer(state: GraphState) -> dict:
     if context:
         blocks.append(f"Earlier in this conversation:\n{context}")
 
-    # Enough room for a reply that carries a heading, a table and a sentence of context
-    # for each of several requested items, rather than one that gets cut off mid-table.
+    # Enough room for a reply that carries a heading and a sentence of context for each of
+    # several requested items, plus the rare single-value table small enough to be worth the
+    # model writing itself, rather than one that gets cut off mid-answer. A large result's
+    # own table no longer counts against this: table_supplied_separately keeps the model
+    # from having to write it at all.
     text, spent = llm.chat_stream(
         model, _ANSWER_SYSTEM, "\n\n".join(blocks), on_token=on_token, max_completion_tokens=2000
     )
     usage.add(spent)
+
+    table_tasks = [t for t in verified if t.task_id in table_supplied]
+    if table_tasks:
+        appended = "\n\n".join(_format_result(t, include_heading=False) for t in table_tasks)
+        before_tables = len(text)
+        text = f"{text.rstrip()}\n\n{appended}" if text.strip() else appended
+        if on_token and len(text) > before_tables:
+            on_token(text[before_tables:])
+
     before = len(text)
     text = _ensure_every_result_is_reported(text, verified)
     if on_token and len(text) > before:
