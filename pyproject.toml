@@ -1,7 +1,7 @@
 [project]
 name = "chinhook"
 version = "0.1.0"
-description = "Add your description here"
+description = "Chinhook's Requirements"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
     "openai>=3.16.2",
     "pandas>=3.0.6",
     "psycopg2-binary>=2.9.13",
+    "pymysql[rsa]>=1.2",
     "python-dotenv>=1.2.3",
     "qdrant-client>=1.19.1",
     "sqlalchemy>=2.0",
@@ -35,7 +36,8 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "integration: needs a reachable Postgres and Qdrant; skipped when they are not",
-    "llm: needs real Azure OpenAI credentials, on top of integration's needs",
+    "llm: needs a real model (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL), on top of integration's needs",
+    "databases: needs Qdrant and TEST_PG_URL and/or TEST_MYSQL_URL; a backend with no URL is skipped",
 ]
 
 [tool.ruff]

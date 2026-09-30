@@ -149,4 +149,4 @@ def restart(conn) -> None:
 
     conn.rollback()
     with conn.cursor() as cur:
-        current_dialect().start(cur, dialects.DEFAULT_TIMEOUT_MS)
+        current_dialect().start(cur, dialects.DEFAULT_TIMEOUT_MS, current_schema())

@@ -94,6 +94,7 @@ def run_sql_query(query: str):
             with connection.cursor() as setup:
                 dialect.set_timeout(setup, STATEMENT_TIMEOUT_MS)
             cur = dialect.streaming_cursor(connection)
+            rows: list = []
             try:
                 cur.execute(query)
                 # A server-side cursor does not populate .description until something has
@@ -104,7 +105,7 @@ def run_sql_query(query: str):
                     return {"columns": [], "rows": []}
                 cols = [d[0] for d in cur.description]
             finally:
-                cur.close()
+                dialect.finish_streaming(cur, connection, exhausted=len(rows) <= MAX_ROWS)
             truncated = len(rows) > MAX_ROWS
             result = {"columns": cols, "rows": [tuple(row) for row in rows[:MAX_ROWS]]}
             if truncated:

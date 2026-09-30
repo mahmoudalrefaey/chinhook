@@ -84,6 +84,14 @@ def engine() -> Engine:
         return created
 
 
+def forget_engine(db: runtime.DatabaseSettings) -> None:
+    """Drop the engine for these settings, when they turned out not to work."""
+    with _engines_lock:
+        found = _engines.pop(_engine_key(db), None)
+    if found is not None:
+        found.dispose()
+
+
 @contextlib.contextmanager
 def get_connection() -> Iterator:
     """A DB-API connection borrowed from the current session's pool, for one `with` block.
@@ -96,13 +104,14 @@ def get_connection() -> Iterator:
     conn = engine().raw_connection()
     try:
         with conn.cursor() as cur:
-            dialect().start(cur, dialects.DEFAULT_TIMEOUT_MS)
+            dialect().start(cur, dialects.DEFAULT_TIMEOUT_MS, schema())
         yield conn
     finally:
-        try:
-            conn.rollback()
-        except Exception:  # noqa: BLE001
-            conn.invalidate()
+        if conn.is_valid:
+            try:
+                conn.rollback()
+            except Exception:  # noqa: BLE001
+                conn.invalidate()
         conn.close()
 
 

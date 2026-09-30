@@ -13,7 +13,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy.dialects import postgresql
+from sqlalchemy.dialects import mysql, postgresql
 
 import runtime
 
@@ -49,8 +49,9 @@ class Dialect:
     def configure_session(self, dbapi_conn) -> None:
         """Run once on every new connection, before it is used for anything."""
 
-    def start(self, cursor, timeout_ms: int) -> None:
-        """Run at the start of every borrow: read-only transaction, time limit."""
+    def start(self, cursor, timeout_ms: int, schema: str) -> None:
+        """Run at the start of every borrow: read-only transaction, time limit, and the
+        connected schema as the one an unqualified table name refers to."""
 
     def set_timeout(self, cursor, timeout_ms: int) -> None:
         """Tighten the time limit for the next statement on this borrowed connection."""
@@ -58,6 +59,10 @@ class Dialect:
     def streaming_cursor(self, dbapi_conn):
         """A cursor that fetches rows from the server as they are asked for."""
         return dbapi_conn.cursor()
+
+    def finish_streaming(self, cursor, dbapi_conn, exhausted: bool) -> None:
+        """Close a streaming cursor, whether or not every row was read from it."""
+        cursor.close()
 
     # ---- reading the catalog ----
 
@@ -102,9 +107,14 @@ class _Postgres(Dialect):
         # transaction may land on a different server connection than the last.
         dbapi_conn.set_session(readonly=True)
 
-    def start(self, cursor, timeout_ms: int) -> None:
-        # LOCAL: it ends with this transaction, so it cannot leak to the next borrower.
+    def start(self, cursor, timeout_ms: int, schema: str) -> None:
+        # LOCAL: both end with this transaction, so neither can leak to the next borrower.
         cursor.execute("SET LOCAL statement_timeout = %s", (int(timeout_ms),))
+        # The model writes table names unqualified, as the schema it was shown lists them, so
+        # they have to resolve in the connected schema rather than in public. public stays
+        # after it for the functions extensions usually install there.
+        path = self.quote(schema) + ("" if schema == "public" else ", public")
+        cursor.execute(f"SET LOCAL search_path TO {path}")
 
     def set_timeout(self, cursor, timeout_ms: int) -> None:
         cursor.execute("SET LOCAL statement_timeout = %s", (int(timeout_ms),))
@@ -161,7 +171,108 @@ POSTGRES = _Postgres(
     }),
 )
 
-_BY_NAME = {POSTGRES.name: POSTGRES}
+# ---------- MySQL ----------
+
+_MYSQL_RULES = (
+    "You answer questions using this schema, querying a MySQL database. "
+    "Table and column names are shown in double quotes below; in your query write each "
+    "one exactly as given, wrapped in backticks (`name`), never in double quotes. "
+    "Use MySQL syntax only (e.g. CURDATE(), NOW(), DATE_SUB(CURDATE(), INTERVAL 7 DAY), "
+    "LIMIT n) — never PostgreSQL-only syntax such as ILIKE, :: casts or FULL OUTER JOIN. "
+    "When matching user-provided text values (names, titles, etc.) in WHERE clauses, "
+    "compare case-insensitively, e.g. LOWER(`column`) = LOWER('value') or "
+    "LOWER(`column`) LIKE LOWER('%value%') — the user may type a value in any case.\n"
+)
+
+_mysql_preparer = mysql.dialect().identifier_preparer
+
+
+class _MySQL(Dialect):
+    def connect_args(self, db: runtime.DatabaseSettings) -> dict:
+        args: dict = {"connect_timeout": 10, "charset": "utf8mb4"}
+        if db.ssl_mode == "disable":
+            args["ssl_disabled"] = True
+        elif db.ssl_mode == "require":
+            # Any non-empty ssl option makes PyMySQL refuse a server without TLS. The
+            # certificate is not verified, the same meaning "require" has for Postgres.
+            args["ssl"] = {"check_hostname": False}
+        # "prefer" passes nothing: PyMySQL then uses TLS whenever the server offers it.
+        return args
+
+    def configure_session(self, dbapi_conn) -> None:
+        with dbapi_conn.cursor() as cur:
+            cur.execute("SET SESSION TRANSACTION READ ONLY")
+            cur.execute("SELECT VERSION()")
+            (version,) = cur.fetchone()
+        # MariaDB spells the statement time limit differently, and in seconds.
+        dbapi_conn._chinhook_mariadb = "mariadb" in str(version).lower()
+
+    def start(self, cursor, timeout_ms: int, schema: str) -> None:
+        # The database named in the URL is already the default one: nothing to point at.
+        self.set_timeout(cursor, timeout_ms)
+        # Explicit, per borrow, on top of the session default above: it also holds behind a
+        # proxy that does not keep session state between transactions.
+        cursor.execute("START TRANSACTION READ ONLY")
+
+    def set_timeout(self, cursor, timeout_ms: int) -> None:
+        if getattr(cursor.connection, "_chinhook_mariadb", False):
+            cursor.execute("SET SESSION max_statement_time = %s", (int(timeout_ms) / 1000,))
+        else:
+            cursor.execute("SET SESSION max_execution_time = %s", (int(timeout_ms),))
+
+    def streaming_cursor(self, dbapi_conn):
+        import pymysql.cursors
+
+        return dbapi_conn.cursor(pymysql.cursors.SSCursor)
+
+    def finish_streaming(self, cursor, dbapi_conn, exhausted: bool) -> None:
+        if exhausted:
+            cursor.close()
+            return
+        # Closing an unbuffered cursor reads every remaining row off the network first,
+        # which for a result capped at a few hundred rows of millions is the very transfer
+        # the cap exists to avoid. Dropping the connection instead ends the query at once;
+        # the pool opens a fresh one for whoever needs it next. The result is told it is no
+        # longer streaming first, or PyMySQL tries the same drain again, on a closed socket,
+        # when it is garbage collected.
+        result = getattr(cursor, "_result", None)
+        if result is not None:
+            result.unbuffered_active = False
+        dbapi_conn.invalidate()
+
+    def row_estimates(self, conn, schema: str) -> dict[str, int]:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT table_name, table_rows FROM information_schema.tables
+                   WHERE table_schema = %s""",
+                (schema,),
+            )
+            return {name: max(0, int(rows or 0)) for name, rows in cur.fetchall()}
+
+    def quote(self, name: str) -> str:
+        return _mysql_preparer.quote_identifier(name)
+
+
+MYSQL = _MySQL(
+    name=runtime.MYSQL,
+    sqlglot="mysql",
+    prompt_rules=_MYSQL_RULES,
+    foreign_keys_sql="""SELECT DISTINCT table_name, referenced_table_name
+        FROM information_schema.key_column_usage
+        WHERE table_schema = %s AND referenced_table_schema = %s
+          AND referenced_table_name IS NOT NULL""",
+    text_types=frozenset({"varchar", "char", "text", "tinytext", "mediumtext", "longtext", "enum", "set"}),
+    system_schemas=frozenset({"information_schema"}),
+    forbidden_functions=frozenset({
+        "sleep", "benchmark", "load_file",
+        "get_lock", "release_lock", "release_all_locks", "is_free_lock", "is_used_lock",
+        "sys_exec", "sys_eval",
+        "master_pos_wait", "source_pos_wait",
+        "wait_for_executed_gtid_set", "wait_until_sql_thread_after_gtids",
+    }),
+)
+
+_BY_NAME = {POSTGRES.name: POSTGRES, MYSQL.name: MYSQL}
 
 
 def for_settings(db: runtime.DatabaseSettings) -> Dialect:
