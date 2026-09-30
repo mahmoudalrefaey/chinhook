@@ -1,6 +1,6 @@
 """Schema retrieval, wrapped in a chat-scoped cache.
 
-scripts.db_module owns the actual search: the hybrid dense-and-lexical retrieval over
+scripts.db owns the actual search: the hybrid dense-and-lexical retrieval over
 indexed tables, the foreign-key expansion, and the value index. What this module adds is
 that a task's retrieval can be reused: a follow-up that names entities already searched
 reuses those cached definitions and skips the embedding round trip; a question about
@@ -30,7 +30,7 @@ _word_indexes: dict[str, dict[str, str]] = {}
 
 def table_names() -> list[str]:
     """Every table in the database, read from the database itself."""
-    from scripts.db_module import get_connection, get_table_names as _get_table_names
+    from scripts.db import get_connection, get_table_names as _get_table_names
 
     with get_connection() as conn:
         return _get_table_names(conn)
@@ -56,7 +56,7 @@ def catalog() -> dict[str, list[tuple[str, str]]]:
         return cached[1] if cached else {}
 
     from scripts.db.introspection import get_catalog
-    from scripts.db_module import get_connection
+    from scripts.db import get_connection
 
     try:
         with get_connection() as conn:
@@ -195,7 +195,7 @@ def retrieve_for_task(task, cache: SchemaCache, top_k: Optional[int] = None) -> 
         if cached is not None:
             return cached, hints, True
 
-    from scripts.db_module import get_relevant_schema
+    from scripts.db import get_relevant_schema
 
     kwargs = {"top_k": top_k} if top_k is not None else {}
     schema_text = get_relevant_schema(task.question or task.raw, **kwargs)
@@ -212,7 +212,7 @@ def retrieve_for_message(question: str) -> tuple[str, list[str]]:
     about without being handed the entire catalog. Each task gets its own, more precisely
     scoped retrieval afterward, in its own branch of the graph.
     """
-    from scripts.db_module import retrieve_tables
+    from scripts.db import retrieve_tables
 
     tables = retrieve_tables(question)
     schema_text = "\n".join(t["table_def"] for t in tables)
@@ -222,7 +222,7 @@ def retrieve_for_message(question: str) -> tuple[str, list[str]]:
 
 def search_values_for(question: str, top_k: int = 10) -> list[dict]:
     """Real, indexed values that match the question. See scripts.db.retrieval.search_values."""
-    from scripts.db_module import search_values
+    from scripts.db import search_values
 
     return search_values(question, top_k=top_k)
 
@@ -235,6 +235,6 @@ def all_schema_text() -> str:
     which on a schema with more tables than that top-k defeats the entire point of asking for
     the whole picture.
     """
-    from scripts.db_module import all_schema_text as _all_schema_text
+    from scripts.db import all_schema_text as _all_schema_text
 
     return _all_schema_text()

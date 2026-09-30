@@ -180,7 +180,7 @@ def node_generate(state: TaskGraphState) -> dict:
     task = state["task"]
     model = state["model"]
     from scripts.db.clients import dialect
-    from scripts.db_module import tools
+    from scripts.db import tools
 
     schema_text = _visible_schema(task)
     lines = [
@@ -315,7 +315,7 @@ def node_check_and_run(state: TaskGraphState) -> dict:
     # The database connection's own validation runs again here regardless: the check above
     # decides whether this task's own retry loop should fire, but scripts.db.sql.run_sql_query
     # never trusts a caller's own parse for whether a write can reach the database.
-    from scripts.db_module import run_sql_query
+    from scripts.db import run_sql_query
 
     result = run_sql_query(sql)
     if isinstance(result, dict) and "columns" in result:

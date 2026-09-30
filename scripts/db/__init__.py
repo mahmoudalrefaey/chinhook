@@ -7,11 +7,9 @@
     evidence        a plain description of what each table actually represents
     values          which columns are worth indexing by value, and what they hold
     indexing        writing tables and values into the vector store
+    retention       how long an index is kept after it was last used
     retrieval       the table definitions and values a question is answered from
     sql             running a read-only query, and the tool the model is given
-
-Everything that used to import from scripts.db_module still can: that module is now a thin
-re-export of this package, so callers outside this folder were not touched.
 """
 
 from scripts.db.clients import embed, embed_batch, get_connection, qdrant

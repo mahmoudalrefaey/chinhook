@@ -150,7 +150,7 @@ class SchemaCache:
 
 
 def split_schema(schema_text: str) -> dict[str, str]:
-    """Split the newline-joined table definitions db_module returns into name -> definition.
+    """Split the newline-joined table definitions scripts.db returns into name -> definition.
 
     The definitions are produced by get_table_defs() and always start with a quoted table
     name, so the split is a read of an existing format rather than a new format invented

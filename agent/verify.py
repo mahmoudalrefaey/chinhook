@@ -1,7 +1,7 @@
 """Task and result verification.
 
 This is deliberately separate from SQL validation. Validation answers "is this valid and
-safe SQL" and already exists in scripts.db_module.validate_sql, which this module calls
+safe SQL" and already exists in scripts.db.sql.validate_sql, which this module calls
 rather than reimplements. Verification answers a different question: "does what came back
 actually satisfy the task the user asked for".
 

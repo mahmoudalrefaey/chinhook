@@ -7,8 +7,10 @@ never touch another's index.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 
 from qdrant_client.models import (
@@ -42,6 +44,10 @@ from scripts.db.values import low_cardinality_values
 # column with a genuinely large number of distinct values still index correctly.
 _EMBED_BATCH_SIZE = 200
 _UPSERT_BATCH_SIZE = 200
+# How many table descriptions are requested from the model at once. Each is a separate,
+# short call, so a database of a few hundred tables would otherwise spend most of its first
+# connection waiting on them one after another.
+_EVIDENCE_WORKERS = 4
 
 # Called as progress(done, total, message) while indexing runs, so the interface can show how
 # far along it is. Optional everywhere.
@@ -113,16 +119,39 @@ def _table_name_from_def(table_def: str) -> str:
     return table_def.split('"')[1].split('"')[0]
 
 
+def _describe_all(conn, table_defs: list[str], progress: Progress = None) -> list[str]:
+    """One model-written sentence per table, in the same order as table_defs.
+
+    The sample rows are read one table at a time on the one borrowed connection; only the
+    model calls, which is where the waiting is, run several at once. Each runs in a copy of
+    the current context, so it uses this session's model and key and nobody else's.
+    """
+    total = len(table_defs)
+    samples = []
+    for done, table_def in enumerate(table_defs):
+        table_name = _table_name_from_def(table_def)
+        _report(progress, done, total * 2, f"Reading {table_name}")
+        samples.append(get_sample_rows(conn, table_name))
+
+    descriptions = [""] * total
+    with ThreadPoolExecutor(max_workers=_EVIDENCE_WORKERS) as pool:
+        futures = {
+            pool.submit(contextvars.copy_context().run, generate_evidence, table_def, columns, rows): i
+            for i, (table_def, (columns, rows)) in enumerate(zip(table_defs, samples, strict=True))
+        }
+        for done, future in enumerate(as_completed(futures), start=1):
+            descriptions[futures[future]] = future.result()
+            _report(progress, total + done, total * 2, f"Described {done} of {total} tables")
+    return descriptions
+
+
 def _index_tables(conn, table_defs: list[str], fingerprints: dict, progress: Progress = None) -> int:
     """Embed and upsert one point per table, enriched with evidence and its join neighbours."""
     foreign_keys = get_foreign_keys(conn)
     enriched: list[tuple[str, dict]] = []
     total = len(table_defs)
-    for done, table_def in enumerate(table_defs):
+    for table_def, evidence in zip(table_defs, _describe_all(conn, table_defs, progress), strict=True):
         table_name = _table_name_from_def(table_def)
-        _report(progress, done, total, f"Describing {table_name}")
-        columns, sample_rows = get_sample_rows(conn, table_name)
-        evidence = generate_evidence(table_def, columns, sample_rows)
         enriched_def = f"{table_def}\n  Represents: {evidence}" if evidence else table_def
         fingerprint = fingerprints.get(table_name, {"table_name": table_name})
         enriched.append((enriched_def, fingerprint))
