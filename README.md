@@ -362,7 +362,6 @@ chinhook/
 ├── scripts/
 │   ├── indexer.py               # Index maintenance CLI
 │   ├── db_module.py             # Thin re-export shim over scripts.db, kept for compatibility
-│   ├── generator.py             # Thin CLI-facing shim over agent.graph
 │   └── db/
 │       ├── clients.py            # Connection pool, Qdrant client, embedding calls
 │       ├── introspection.py

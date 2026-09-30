@@ -83,6 +83,11 @@ def get_model_config(model_name: str) -> dict:
     return MODEL_CONFIGS.get(model_name, MODEL_CONFIGS[DEFAULT_MODEL])
 
 
+def get_available_models() -> list[str]:
+    """The model names the CLI can offer a choice between."""
+    return list(MODEL_CONFIGS.keys())
+
+
 _azure_clients: dict[str, Any] = {}
 
 

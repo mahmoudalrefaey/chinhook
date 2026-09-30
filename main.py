@@ -6,9 +6,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import chat_engine
 from agent.session import new_chat
-from scripts.generator import get_available_models
 from scripts.indexer import run_index_check, get_index_status
 import config
+from config import get_available_models
 
 
 def print_welcome():
