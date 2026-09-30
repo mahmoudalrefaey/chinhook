@@ -6,9 +6,9 @@ npm-debug.log
 __pycache__/
 *.pyc
 *.pyo
+.github/
 .venv/
-.kilo/
-data/
+tests/
 
 # Tooling caches
 .pytest_cache/
