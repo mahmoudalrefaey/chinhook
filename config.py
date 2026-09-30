@@ -38,6 +38,12 @@ DATABASE_URL_RO = os.getenv("DATABASE_URL_RO") or DATABASE_URL
 
 # ---------- Qdrant ----------
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+# Unset for local dev, where Qdrant runs with no auth at all. Set this to the full
+# read-write key when Qdrant itself has QDRANT__SERVICE__API_KEY configured, which the app
+# and the indexer both need to keep working the moment that is turned on - a separate,
+# read-only key is what a person browsing the dashboard directly should use instead, never
+# this one.
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY") or None
 # One collection per kind of thing being searched: a table's own definition, and a real
 # value one of its columns holds. Kept apart because a question is answered by finding both
 # at once through different searches, not by ranking them against each other in one list.

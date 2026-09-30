@@ -23,7 +23,7 @@ from qdrant_client import QdrantClient
 import config
 from config import DATABASE_URL, DATABASE_URL_RO, QDRANT_URL
 
-qdrant = QdrantClient(url=QDRANT_URL)
+qdrant = QdrantClient(url=QDRANT_URL, api_key=config.QDRANT_API_KEY)
 
 _pool_lock = threading.Lock()
 _pool = None
