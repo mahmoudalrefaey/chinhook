@@ -1,4 +1,4 @@
-/* Interface styling for the Chinook database chat.
+/* Interface styling for the Chinhook database chat.
    Palette sampled from banner.png so the page matches the brand mark exactly.
    Everything here is plain CSS. No component libraries are involved. */
 
@@ -589,7 +589,7 @@ h1, h2, h3, h4 {
    to fit the whole conversation instead of clipping it the way a bounded height requires.
 
    stTabPanel and the vertical block Streamlit gives each tab's own content are generic to
-   every tab, not just Chat, so this scrolls Compare models, Schema and Index the same way:
+   every tab, not just Chat, so this scrolls the Schema tab the same way:
    each tab's own content fills the space below the tab bar and scrolls independently, rather
    than one page-length scrollbar for whichever tab happens to be open. */
 html, body {
@@ -642,7 +642,7 @@ html, body {
     flex-direction: column;
 }
 
-/* stTabs' own direct child wraps both the tab bar and every panel, active or not, all four
+/* stTabs' own direct child wraps both the tab bar and every panel, active or not, all
    of them, all the time: Streamlit runs every tab's code and keeps every panel's markup in
    the DOM on every rerun, whichever tab is on screen. This div has no data-testid of its
    own, but it is stTabs' only child, which is enough to reach it precisely. Giving it a real
@@ -656,7 +656,7 @@ html, body {
     flex-direction: column;
 }
 
-/* The tab bar itself: this wrapper's first child, ahead of the four stTabPanel siblings.
+/* The tab bar itself: this wrapper's first child, ahead of the stTabPanel siblings.
    flex-shrink defaults to 1, same as everything else in this chain, so under enough vertical
    pressure - a tall answer, a nested expander opened inside another one - the browser was
    shrinking the tab row right along with them instead of leaving it alone, down to a sliver
@@ -668,10 +668,10 @@ html, body {
     flex-shrink: 0;
 }
 
-/* Streamlit marks whichever three of the four panels are not on screen inert="true", and
+/* Streamlit marks every panel that is not on screen inert="true", and
    hides them with a same-specificity class rule of its own. Scoping every rule below to the
    one panel that is NOT inert is what keeps this from fighting that rule and forcing all
-   four tabs' content to lay out stacked on top of each other at once, which is what
+   tabs' content to lay out stacked on top of each other at once, which is what
    targeting [data-testid="stTabPanel"] unconditionally did the first time this was written. */
 [data-testid="stTabPanel"]:not([inert]) {
     flex: 1 1 auto;
@@ -812,56 +812,6 @@ html, body {
 
 .pill-ok { background: #E9F6EC; color: #1B7F35; }
 .pill-warn { background: var(--brand-wash); color: var(--brand); }
-.pill-tag {
-    background: var(--surface-alt);
-    color: var(--ink);
-    border: 1px solid var(--line);
-    font-weight: 500;
-}
-
-.tag-group { margin-bottom: 0.7rem; }
-.tag-group-label {
-    font-size: 0.78rem;
-    color: var(--muted);
-    margin-bottom: 0.35rem;
-}
-.tag-wrap { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-
-/* ---------- Comparison ---------- */
-
-.asked {
-    background: var(--brand-wash);
-    border-left: 3px solid var(--brand);
-    border-radius: var(--radius-sm);
-    padding: 0.7rem 1rem;
-    font-size: 0.93rem;
-    font-weight: 500;
-    margin: 0.4rem 0 1.2rem 0;
-}
-
-.compare-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding-bottom: 0.55rem;
-    margin-bottom: 0.7rem;
-    border-bottom: 2px solid var(--brand);
-}
-
-.compare-name { font-weight: 700; font-size: 0.98rem; }
-
-.compare-answer {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-sm);
-    padding: 0.85rem 1rem;
-    font-size: 0.9rem;
-    line-height: 1.6;
-    margin: 0.6rem 0;
-    box-shadow: var(--shadow-sm);
-}
-
 /* ---------- Figures ---------- */
 
 .figure {

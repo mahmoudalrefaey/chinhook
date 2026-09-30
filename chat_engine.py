@@ -128,3 +128,42 @@ def schema_overview():
         }
         for name, kind in tables.items()
     ]
+
+
+def prepare_index(progress=None):
+    """Bring the current database's index up to date, building it the first time.
+
+    Only tables whose shape changed since the last run are re-indexed, so calling this for a
+    database that is already indexed and unchanged costs one catalog read and nothing else.
+    progress, when given, is called as progress(done, total, message) while it runs.
+    """
+    from scripts.db.indexing import check_and_index
+
+    return check_and_index(progress)
+
+
+def delete_index():
+    """Remove everything this deployment holds about the current database."""
+    from scripts.db.indexing import delete_index as _delete_index
+
+    _delete_index()
+
+
+def describe_index_error(exc: Exception, db=None) -> str:
+    """Why indexing or reading the index failed, in words that say whose problem it is.
+
+    db is the database that was being indexed; the current session's when not given.
+    """
+    import connection
+
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if "qdrant" in text or "6333" in text or "responsehandlingexception" in text or (
+        "unexpectedresponse" in text
+    ):
+        return (
+            "The search index service is not reachable right now. This is a problem with "
+            "this deployment, not with your database; try again in a minute."
+        )
+    if isinstance(exc, runtime.NotConnected):
+        return "No database is connected."
+    return connection.describe_database_error(exc, db or runtime.current().db)

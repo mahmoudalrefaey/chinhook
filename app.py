@@ -21,17 +21,19 @@ ROOT = Path(__file__).parent
 ICON = ROOT / "assets" / "icon.svg"
 
 st.set_page_config(
-    page_title="Chinook Database Chat",
+    page_title="Chinhook · Chat with your database",
     page_icon=str(ICON) if ICON.exists() else None,
     layout="wide",
     initial_sidebar_state="auto",
 )
 
+# Questions that make sense for any database, since nothing here knows what the connected
+# one holds until it has been read.
 EXAMPLE_QUESTIONS = [
-    "How many customers are from the USA?",
-    "What are the top 5 selling tracks?",
-    "Show me all albums by AC/DC",
-    "Which country brought in the most revenue?",
+    "What tables are in this database?",
+    "Which table has the most rows?",
+    "What can I ask about this data?",
+    "Summarise what this database is about",
 ]
 
 
@@ -56,7 +58,7 @@ try:
     import connection
     import rate_limit
     import runtime
-    from scripts.db import full_reindex, get_index_status
+    from scripts.db import get_index_status
 except Exception as exc:  # noqa: BLE001
     # escape_text is one of the names this same try was attempting to import, so it cannot
     # be trusted to exist if the failure happened before that import completed. The
@@ -64,10 +66,9 @@ except Exception as exc:  # noqa: BLE001
     import html as _html
 
     st.markdown(
-        '<div class="notice"><strong>Cannot reach the backing services.</strong><br>'
+        '<div class="notice"><strong>Something is wrong with this deployment.</strong><br>'
         f"{_html.escape(f'{type(exc).__name__}: {exc}')}<br><br>"
-        "Check that the Postgres and Qdrant containers are running, and that the values in "
-        "<code>.env</code> are filled in.</div>",
+        "The app could not start. Check the deployment's environment and logs.</div>",
         unsafe_allow_html=True,
     )
     st.stop()
@@ -115,27 +116,256 @@ if not _require_passphrase():
     st.stop()
 
 
-# ---------- connection ----------
-# Read from the environment for now; the setup screen that lets each visitor enter their own
-# database and model replaces this.
-if st.session_state.get("runtime") is None:
-    try:
-        st.session_state.runtime = connection.runtime_from_env()
-    except Exception as exc:  # noqa: BLE001
-        runtime.activate(None)
+# ---------- state ----------
+
+for name, default in [("messages", []), ("pending", None), ("session", None), ("answered", {}),
+                      ("rate_bucket", rate_limit.new_session_bucket()),
+                      # Each attempt to connect costs a real database login and a model call,
+                      # so it is limited on its own, separately from questions.
+                      ("setup_bucket", rate_limit.TokenBucket(5, 5)),
+                      ("runtime", None), ("index_ready", False)]:
+    if name not in st.session_state:
+        st.session_state[name] = default
+
+
+def _forget_connection():
+    """Back to the setup screen, with nothing of the previous connection or chat kept."""
+    st.session_state.runtime = None
+    st.session_state.index_ready = False
+    st.session_state.messages = []
+    st.session_state.session = None
+    st.session_state.answered = {}
+    st.session_state.pending = None
+
+
+# ---------- setup ----------
+# The database and model a visitor brings live in st.session_state.runtime and nowhere else:
+# not in a file, not in a database, not in the URL. Closing the tab forgets them.
+
+_DIALECTS = {"PostgreSQL": runtime.POSTGRES, "MySQL": runtime.MYSQL}
+
+_READ_ONLY_SQL = {
+    runtime.POSTGRES: (
+        "CREATE ROLE chat_reader WITH LOGIN PASSWORD 'choose-a-password';\n"
+        "GRANT CONNECT ON DATABASE your_database TO chat_reader;\n"
+        "GRANT USAGE ON SCHEMA public TO chat_reader;\n"
+        "GRANT SELECT ON ALL TABLES IN SCHEMA public TO chat_reader;\n"
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO chat_reader;"
+    ),
+    runtime.MYSQL: (
+        "CREATE USER 'chat_reader'@'%' IDENTIFIED BY 'choose-a-password';\n"
+        "GRANT SELECT, SHOW VIEW ON your_database.* TO 'chat_reader'@'%';"
+    ),
+}
+
+
+def _allow_page_scroll():
+    """Let the setup screens scroll like an ordinary page.
+
+    The chat page is an app shell (see styles.css) where only the conversation scrolls and
+    everything above it is pinned to the viewport. These screens have no conversation, and a
+    form taller than the window would otherwise be cut off with no way to reach its end.
+    """
+    st.markdown(
+        "<style>"
+        '[data-testid="stMain"] { overflow-y: auto !important; }'
+        '[data-testid="stMainBlockContainer"],'
+        '[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"]'
+        " { height: auto !important; overflow: visible !important; }"
+        "</style>",
+        unsafe_allow_html=True,
+    )
+
+
+def _on_provider_change():
+    st.session_state.setup_base_url = connection.PROVIDERS.get(st.session_state.setup_provider, "")
+
+
+def render_setup():
+    _allow_page_scroll()
+    st.markdown('<div class="page-title">Chat with your database</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">Connect a PostgreSQL or MySQL database and an '
+        "OpenAI-compatible model, then ask questions in plain language. What you enter here is "
+        "kept only for this browser session and never stored, and every query runs "
+        "read-only.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+
+    # ---- database
+    st.markdown('<div class="panel-label">1 · Your database</div>', unsafe_allow_html=True)
+    kind = st.radio("Database", list(_DIALECTS), horizontal=True, key="setup_dialect")
+    dialect = _DIALECTS[kind]
+    mode = st.radio(
+        "Connection details", ["Connection URL", "Separate fields"], horizontal=True, key="setup_mode"
+    )
+    default_port = "5432" if dialect == runtime.POSTGRES else "3306"
+    scheme = "postgresql" if dialect == runtime.POSTGRES else "mysql"
+    url = host = port = database = username = password = ""
+    if mode == "Connection URL":
+        url = st.text_input(
+            "Connection URL",
+            type="password",
+            key="setup_url",
+            placeholder=f"{scheme}://user:password@host:{default_port}/database",
+            help="The URL your hosting provider gives you. It has to be reachable from the internet.",
+        )
+    else:
+        left, right = st.columns([3, 1])
+        host = left.text_input("Host", key="setup_host", placeholder="db.example.com")
+        port = right.text_input("Port", key="setup_port", placeholder=default_port)
+        database = st.text_input("Database name", key="setup_database")
+        left, right = st.columns(2)
+        username = left.text_input("User", key="setup_user")
+        password = right.text_input("Password", type="password", key="setup_password")
+
+    left, right = st.columns(2)
+    schema = ""
+    if dialect == runtime.POSTGRES:
+        schema = left.text_input(
+            "Schema", key="setup_schema", value="public",
+            help="Questions are answered from the tables and views in this schema.",
+        )
+    ssl_mode = right.selectbox(
+        "SSL", runtime.SSL_MODES, key="setup_ssl",
+        help="prefer: encrypt when the server supports it. require: always encrypt. "
+        "disable: never encrypt.",
+    )
+    with st.expander("Connecting with a read-only login (recommended)"):
         st.markdown(
-            '<div class="notice"><strong>No database and model are configured.</strong><br>'
-            f"{escape_text(f'{type(exc).__name__}: {exc}')}</div>",
+            "Every connection this app opens is read-only at the database itself, whatever the "
+            "login is allowed to do. A login that can only read is still the safest thing to "
+            "give it:",
+        )
+        st.code(_READ_ONLY_SQL[dialect], language="sql")
+
+    # ---- model
+    st.markdown('<div class="panel-label">2 · Your model</div>', unsafe_allow_html=True)
+    if "setup_base_url" not in st.session_state:
+        st.session_state.setup_base_url = connection.PROVIDERS["OpenAI"]
+    st.selectbox(
+        "Provider", list(connection.PROVIDERS), key="setup_provider", on_change=_on_provider_change
+    )
+    base_url = st.text_input(
+        "Base URL", key="setup_base_url",
+        help="Any OpenAI-compatible chat completions endpoint.",
+    )
+    api_key = st.text_input("API key", type="password", key="setup_api_key")
+    model = st.text_input(
+        "Model", key="setup_model", placeholder="e.g. gpt-4.1-mini",
+        help="The model has to support tool (function) calling: every query is written through one.",
+    )
+    with st.expander("Advanced"):
+        fast_model = st.text_input(
+            "Fast model (optional)", key="setup_fast_model",
+            help="A cheaper model for the one-line description of each table written while "
+            "indexing. Leave empty to use the model above for everything.",
+        )
+
+    if not st.button("Connect", type="primary"):
+        return
+
+    allowed, wait = st.session_state.setup_bucket.take()
+    if not allowed:
+        st.error(f"Too many attempts in a short time. Try again in about {wait:.0f} seconds.")
+        return
+    try:
+        if mode == "Connection URL":
+            db = connection.database_settings_from_url(url, schema=schema, ssl_mode=ssl_mode)
+            if db.dialect != dialect:
+                found = "PostgreSQL" if db.dialect == runtime.POSTGRES else "MySQL"
+                raise connection.ConnectionSetupError(
+                    f"That is a {found} URL, but {kind} is selected above."
+                )
+        else:
+            db = connection.database_settings_from_fields(
+                dialect, host, port, database, username, password, schema=schema, ssl_mode=ssl_mode
+            )
+        llm_settings = connection.llm_settings(base_url, api_key, model, fast_model)
+    except connection.ConnectionSetupError as exc:
+        st.error(str(exc))
+        return
+
+    candidate = runtime.Runtime(db=db, llm=llm_settings)
+    with st.status("Checking the connection", expanded=True) as status:
+        try:
+            st.write(f"Connecting to {db.describe()}…")
+            count = connection.check_database(candidate)
+            st.write(f"Connected: {count} tables and views to ask about.")
+            st.write(f"Checking {llm_settings.model}…")
+            connection.check_llm(llm_settings)
+            st.write("The model answers and calls tools.")
+        except connection.ConnectionSetupError as exc:
+            status.update(label="Could not connect", state="error")
+            st.error(str(exc))
+            return
+        status.update(label="Connected", state="complete")
+
+    _forget_connection()
+    st.session_state.runtime = candidate
+    st.rerun()
+
+
+def render_prepare():
+    """Bring the connected database's index up to date, then go on to the chat.
+
+    The first connection to a database builds its index; a later one reuses it and only
+    re-indexes tables whose shape changed since, so reconnecting is usually instant.
+    """
+    _allow_page_scroll()
+    rt = st.session_state.runtime
+    st.markdown('<div class="page-title">Preparing your database</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="page-subtitle">Each table is read, described in one sentence by your '
+        "model, and indexed so a question can find the tables it needs. This happens the "
+        "first time a database is connected; reconnecting later reuses it.</div>",
+        unsafe_allow_html=True,
+    )
+    bar = st.progress(0.0, text="Checking the index")
+
+    def progress(done, total, message):
+        bar.progress(min(1.0, done / max(total, 1)), text=message)
+
+    try:
+        with runtime.use(rt):
+            chat_engine.prepare_index(progress)
+    except Exception as exc:  # noqa: BLE001
+        bar.empty()
+        st.markdown(
+            '<div class="notice"><strong>The database could not be indexed.</strong><br>'
+            f"{escape_text(chat_engine.describe_index_error(exc, rt.db))}</div>",
             unsafe_allow_html=True,
         )
-        st.stop()
+        with st.expander("Technical detail"):
+            st.code(f"{type(exc).__name__}: {exc}", language="text")
+        left, right = st.columns(2)
+        if left.button("Try again", type="primary"):
+            st.rerun()
+        if right.button("Change connection"):
+            _forget_connection()
+            st.rerun()
+        return
+    st.session_state.index_ready = True
+    st.rerun()
+
+
+if st.session_state.runtime is None:
+    runtime.activate(None)
+    render_setup()
+    st.stop()
+
+if not st.session_state.index_ready:
+    runtime.activate(None)
+    render_prepare()
+    st.stop()
+
 runtime.activate(st.session_state.runtime)
 TENANT = st.session_state.runtime.tenant_id
 
 
-# Every cached value is keyed by the connected database as well as by whatever the function
-# itself takes: st.cache_data is shared by every session on this server, and a cache keyed by
-# nothing would hand one visitor's schema to another.
+# Cached values are keyed by the connected database: st.cache_data is shared by every session
+# on this server, and a cache keyed by nothing would hand one visitor's schema to another.
 @st.cache_data(ttl=120, show_spinner=False)
 def cached_status(tenant):
     status = get_index_status()
@@ -143,27 +373,13 @@ def cached_status(tenant):
         "db": status["db_tables"],
         "qdrant": status["qdrant_tables"],
         "stale": status["needs_reindex"],
+        "changed": status["changed_tables"],
     }
 
 
 @st.cache_data(ttl=300, show_spinner=False)
 def cached_schema(tenant):
     return chat_engine.schema_overview()
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def cached_indexed_tables(tenant):
-    from scripts.db_module import list_indexed_tables
-
-    return list_indexed_tables()
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def cached_indexed_values(tenant):
-    from scripts.db_module import list_indexed_values
-
-    return list_indexed_values()
-
 
 def render_chart(frame):
     """Draw a bar chart when the shape of the result makes one meaningful."""
@@ -364,15 +580,6 @@ def render_failure(result):
             st.code(str(detail), language="text")
 
 
-# ---------- state ----------
-
-for name, default in [("messages", []), ("pending", None),
-                      ("session", None), ("answered", {}),
-                      ("rate_bucket", rate_limit.new_session_bucket())]:
-    if name not in st.session_state:
-        st.session_state[name] = default
-
-
 def chat_session():
     """The conversation this chat is having.
 
@@ -388,67 +595,95 @@ def chat_session():
 
 # ---------- sidebar ----------
 
+try:
+    index_status = cached_status(TENANT)
+except Exception:  # noqa: BLE001
+    index_status = None
+
 with st.sidebar:
-    st.markdown('<div class="side-brand">Chinook <span>Chat</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="side-brand">Chin<span>hook</span></div>', unsafe_allow_html=True)
+    connected = st.session_state.runtime
+
+    st.markdown('<div class="side-heading">Database</div>', unsafe_allow_html=True)
+    dialect_label = "PostgreSQL" if connected.db.dialect == runtime.POSTGRES else "MySQL"
+    where = escape_text(connected.db.url.host or "")
+    if connected.db.dialect == runtime.POSTGRES:
+        where += f" &middot; schema {escape_text(connected.db.schema)}"
+    st.markdown(
+        f'<div class="stat"><span class="stat-label">{dialect_label}</span>'
+        f'<span class="stat-value">{escape_text(connected.db.url.database or "")}</span></div>'
+        f'<div class="timing">{where}</div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown('<div class="side-heading">Model</div>', unsafe_allow_html=True)
-    model = st.session_state.runtime.llm.model
-    st.markdown(f'<div class="timing">{escape_text(model)}</div>', unsafe_allow_html=True)
+    model_text = escape_text(connected.llm.model)
+    if connected.llm.fast_model:
+        model_text += f" &middot; fast: {escape_text(connected.llm.fast_model)}"
+    st.markdown(f'<div class="timing">{model_text}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="side-heading">Index</div>', unsafe_allow_html=True)
-    try:
-        status = cached_status(TENANT)
+    if index_status is None:
+        st.markdown(
+            '<div class="stat"><span class="stat-label">State</span>'
+            '<span class="stat-value">unavailable</span></div>',
+            unsafe_allow_html=True,
+        )
+    else:
         pill = (
-            '<span class="pill pill-warn">stale</span>'
-            if status["stale"]
+            '<span class="pill pill-warn">changed</span>'
+            if index_status["stale"]
             else '<span class="pill pill-ok">ready</span>'
         )
         st.markdown(
-            f'<div class="stat"><span class="stat-label">Database tables</span>'
-            f'<span class="stat-value">{status["db"]}</span></div>'
-            f'<div class="stat"><span class="stat-label">Indexed tables</span>'
-            f'<span class="stat-value">{status["qdrant"]}</span></div>'
+            f'<div class="stat"><span class="stat-label">Tables and views</span>'
+            f'<span class="stat-value">{index_status["db"]}</span></div>'
+            f'<div class="stat"><span class="stat-label">Indexed</span>'
+            f'<span class="stat-value">{index_status["qdrant"]}</span></div>'
             f'<div class="stat"><span class="stat-label">State</span>{pill}</div>',
             unsafe_allow_html=True,
         )
-    except Exception as exc:  # noqa: BLE001
+    if st.button("Refresh index", type="primary", help="Re-index only the tables that changed"):
+        allowed, wait = st.session_state.setup_bucket.take()
+        if not allowed:
+            st.error(f"Try again in about {wait:.0f} seconds.")
+        else:
+            with st.spinner("Refreshing"):
+                try:
+                    count = chat_engine.prepare_index()
+                    cached_status.clear()
+                    cached_schema.clear()
+                    st.success(f"Re-indexed {count} table(s)" if count else "Already up to date")
+                except Exception as exc:  # noqa: BLE001
+                    st.error(chat_engine.describe_index_error(exc))
+
+    st.markdown('<div class="side-heading">Session</div>', unsafe_allow_html=True)
+    if st.session_state.messages and st.button("New chat"):
+        st.session_state.messages = []
+        st.session_state.session = None
+        st.session_state.answered = {}
+        st.rerun()
+    if st.button("Change connection"):
+        _forget_connection()
+        st.rerun()
+    with st.expander("Your data"):
         st.markdown(
-            '<div class="stat"><span class="stat-label">Status</span>'
-            '<span class="stat-value">unavailable</span></div>'
-            f'<div class="timing">{escape_text(type(exc).__name__)}</div>',
+            '<div class="timing">Your connection details are kept only for this browser '
+            "session. The index of this database (table definitions, a one-line description "
+            "of each table, and common values such as countries or categories) is kept on "
+            f"this server and deleted after {config.INDEX_RETENTION_DAYS} days unused.</div>",
             unsafe_allow_html=True,
         )
-
-    if st.button("Rebuild index", type="primary"):
-        with st.spinner("Rebuilding"):
+        if st.button("Delete this database's index"):
             try:
-                count = full_reindex()
-                cached_status.clear()
-                st.success(f"Indexed {count} tables")
+                chat_engine.delete_index()
             except Exception as exc:  # noqa: BLE001
-                st.error(f"{type(exc).__name__}: {exc}")
-
-    if st.session_state.messages:
-        st.markdown('<div class="side-heading">Conversation</div>', unsafe_allow_html=True)
-        asked = sum(1 for m in st.session_state.messages if m["role"] == "user")
-        spent = sum(
-            m["result"].get("timings", {}).get("total", 0)
-            for m in st.session_state.messages
-            if m.get("result")
-        )
-        st.markdown(
-            f'<div class="stat"><span class="stat-label">Questions</span>'
-            f'<span class="stat-value">{asked}</span></div>'
-            f'<div class="stat"><span class="stat-label">Time in answers</span>'
-            f'<span class="stat-value">{spent:.0f}s</span></div>',
-            unsafe_allow_html=True,
-        )
-        if st.button("Clear messages"):
-            st.session_state.messages = []
-            st.session_state.session = None
-            st.session_state.answered = {}
-            st.rerun()
-
+                st.error(chat_engine.describe_index_error(exc))
+            else:
+                cached_status.clear()
+                cached_schema.clear()
+                _forget_connection()
+                st.rerun()
 
 # ---------- header ----------
 # width="stretch" already fills the page's real content column (960px inside
@@ -459,7 +694,7 @@ banner = ROOT / "assets/banner.png"
 if banner.exists():
     st.image(str(banner), width="stretch")
 
-chat_tab, schema_tab, index_tab = st.tabs(["Chat", "Schema", "Index"])
+chat_tab, schema_tab = st.tabs(["Chat", "Schema"])
 
 
 # ---------- chat ----------
@@ -474,7 +709,7 @@ with chat_tab:
     # own top-level element here (Streamlit does not allow it inside a bounded container), but
     # position: fixed in styles.css docks it to the same screen position regardless of where
     # in the DOM it was actually written.
-    question = st.chat_input("Ask about customers, tracks, albums, invoices and more")
+    question = st.chat_input("Ask a question about your data")
     if st.session_state.pending:
         question = st.session_state.pending
         st.session_state.pending = None
@@ -499,9 +734,10 @@ with chat_tab:
         with welcome.container():
             st.markdown('<div class="page-title">Ask the database a question</div>', unsafe_allow_html=True)
             st.markdown(
-                '<div class="page-subtitle">Questions are turned into SQL, run against the '
-                "Chinook database, and answered in plain language. Every answer carries the "
-                "tables that were searched and the query that ran.</div>",
+                '<div class="page-subtitle">Questions are turned into SQL, run read-only against '
+                f"{escape_text(st.session_state.runtime.db.describe())}, and answered in plain "
+                "language. Every answer carries the tables that were searched and the query that "
+                "ran.</div>",
                 unsafe_allow_html=True,
             )
             st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
@@ -592,7 +828,7 @@ with chat_tab:
 
                 diagram.markdown(pipeline_html(completed=finished), unsafe_allow_html=True)
                 result = chat_engine.answer(
-                    question, model, on_stage=advance, on_token=on_token, session=chat_session()
+                    question, on_stage=advance, on_token=on_token, session=chat_session()
                 )
                 diagram.empty()
                 slot.empty()
@@ -632,7 +868,8 @@ with schema_tab:
     st.markdown(
         '<div class="page-subtitle">Read from the database itself rather than written down '
         "anywhere. This is the same introspection the indexer uses, so it is exactly what the "
-        "model can be shown.</div>",
+        "model can be shown. Row counts come from the database's own statistics and are "
+        "approximate.</div>",
         unsafe_allow_html=True,
     )
     st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
@@ -643,7 +880,7 @@ with schema_tab:
         figures = [
             ("Tables", f"{len(tables)}"),
             ("Columns", f"{sum(len(t['columns']) for t in tables)}"),
-            ("Rows", f"{sum(t['rows'] for t in tables):,}"),
+            ("Rows (approx.)", f"{sum(t['rows'] for t in tables):,}"),
         ]
         for column, (label, value) in zip(totals, figures, strict=True):
             column.markdown(
@@ -654,7 +891,8 @@ with schema_tab:
 
         st.markdown('<div class="panel-label">Tables</div>', unsafe_allow_html=True)
         for table in tables:
-            with st.expander(f"{table['table']}  ({table['rows']:,} rows)"):
+            kind = " · view" if table.get("kind") == "view" else ""
+            with st.expander(f"{table['table']}{kind}  (about {table['rows']:,} rows)"):
                 st.dataframe(
                     pd.DataFrame(table["columns"], columns=["Column", "Type"]),
                     width="stretch",
@@ -663,96 +901,6 @@ with schema_tab:
     except Exception as exc:  # noqa: BLE001
         st.markdown(
             f'<div class="notice"><strong>Could not read the schema.</strong><br>'
-            f"{escape_text(f'{type(exc).__name__}: {exc}')}</div>",
-            unsafe_allow_html=True,
-        )
-
-
-# ---------- vector index ----------
-
-with index_tab:
-    st.markdown('<div class="page-title">What is actually indexed</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="page-subtitle">Read straight from Qdrant, not from the database: this '
-        "is what a question's retrieval actually sees, table definitions and real values "
-        "alike. It can differ from the Schema tab when the database has changed since the "
-        "last reindex.</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
-
-    try:
-        indexed_tables = cached_indexed_tables(TENANT)
-        indexed_values = cached_indexed_values(TENANT)
-
-        totals = st.columns(2)
-        figures = [
-            ("Tables indexed", f"{len(indexed_tables)}"),
-            ("Values indexed", f"{len(indexed_values)}"),
-        ]
-        for column, (label, value) in zip(totals, figures, strict=True):
-            column.markdown(
-                f'<div class="figure"><div class="figure-value">{value}</div>'
-                f'<div class="figure-label">{label}</div></div>',
-                unsafe_allow_html=True,
-            )
-
-        values_by_table: dict[str, dict[str, list[str]]] = {}
-        for entry in indexed_values:
-            table = entry.get("table") or ""
-            column = entry.get("column") or ""
-            values_by_table.setdefault(table, {}).setdefault(column, []).append(str(entry.get("value")))
-
-        MAX_TAGS_SHOWN = 60
-
-        st.markdown('<div class="panel-label">Tables</div>', unsafe_allow_html=True)
-        for table in sorted(indexed_tables, key=lambda t: t["table"]):
-            name = table["table"]
-            with st.expander(name):
-                st.markdown(
-                    '<div class="panel-label">Definition, as embedded</div>', unsafe_allow_html=True
-                )
-                st.code(table["table_def"], language="text")
-
-                fingerprint = table.get("fingerprint") or {}
-                stats = []
-                if table["fk_neighbours"]:
-                    stats.append(("Joined to", ", ".join(table["fk_neighbours"])))
-                if fingerprint:
-                    row_estimate = fingerprint.get("row_estimate", "?")
-                    row_estimate_text = f"{row_estimate:,}" if isinstance(row_estimate, int) else str(row_estimate)
-                    stats.append(("Row estimate", row_estimate_text))
-                    stats.append(("Shape hash", str(fingerprint.get("shape_hash", "?"))))
-                for label, value in stats:
-                    st.markdown(
-                        f'<div class="stat"><span class="stat-label">{escape_text(label)}</span>'
-                        f'<span class="stat-value">{escape_text(value)}</span></div>',
-                        unsafe_allow_html=True,
-                    )
-
-                table_values = values_by_table.get(name)
-                if table_values:
-                    st.markdown(
-                        '<div class="panel-label">Indexed values</div>', unsafe_allow_html=True
-                    )
-                    for column, values in sorted(table_values.items()):
-                        shown = sorted(values)[:MAX_TAGS_SHOWN]
-                        tags = "".join(
-                            f'<span class="pill pill-tag">{escape_text(v)}</span>' for v in shown
-                        )
-                        more = len(values) - len(shown)
-                        if more > 0:
-                            tags += f'<span class="pill pill-tag">+{more} more</span>'
-                        st.markdown(
-                            f'<div class="tag-group">'
-                            f'<div class="tag-group-label">{escape_text(column)} ({len(values)})</div>'
-                            f'<div class="tag-wrap">{tags}</div>'
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-    except Exception as exc:  # noqa: BLE001
-        st.markdown(
-            f'<div class="notice"><strong>Could not read the index.</strong><br>'
             f"{escape_text(f'{type(exc).__name__}: {exc}')}</div>",
             unsafe_allow_html=True,
         )

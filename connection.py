@@ -171,3 +171,95 @@ def runtime_from_env() -> runtime.Runtime:
         fast_model=os.getenv("LLM_FAST_MODEL", ""),
     )
     return runtime.Runtime(db=db, llm=llm)
+
+
+# ---------- checking a connection before it is used ----------
+
+def describe_database_error(exc: Exception, db: runtime.DatabaseSettings) -> str:
+    """What went wrong connecting to the database, in words that say what to change."""
+    text = str(getattr(exc, "orig", None) or exc)
+    lower = text.lower()
+    where = f"{db.url.host}:{db.url.port or ''}".rstrip(":")
+    if "password authentication failed" in lower or "access denied" in lower or "(1045" in lower:
+        return "The username or password was rejected."
+    if "could not translate host name" in lower or "name or service not known" in lower or (
+        "getaddrinfo" in lower
+    ) or "nodename nor servname" in lower or "(2005" in lower:
+        return f"The host name {db.url.host} could not be found. Check it for typos."
+    if ("database" in lower and "does not exist" in lower) or "unknown database" in lower or "(1049" in lower:
+        return f"The database {db.url.database} does not exist on this server."
+    if ("no pg_hba.conf entry" in lower and "no encryption" in lower) or (
+        "require_secure_transport" in lower or "(3159" in lower
+    ):
+        return "The server only accepts encrypted connections. Set SSL to require."
+    if "server does not support ssl" in lower or "ssl is required but the server doesn't support it" in lower:
+        return "The server does not support SSL. Set SSL to prefer or disable."
+    if "ssl" in lower and ("error" in lower or "handshake" in lower):
+        return f"The encrypted connection to {where} failed: {text.strip().splitlines()[0]}"
+    if "timeout" in lower or "timed out" in lower or "connection refused" in lower or "(2003" in lower:
+        return (
+            f"Could not reach {where}. The database has to accept connections from the "
+            "internet, not only from localhost or a private network; check the host, the port "
+            "and any firewall or IP allowlist in front of it."
+        )
+    if "no pg_hba.conf entry" in lower:
+        return f"The server at {where} refused this login from this address (pg_hba.conf)."
+    first_line = text.strip().splitlines()[0] if text.strip() else type(exc).__name__
+    return f"Could not connect: {first_line}"
+
+
+def check_database(rt: runtime.Runtime) -> int:
+    """Connect for real, read the schema, and return how many tables and views it has.
+
+    Raises ConnectionSetupError with a reason a person can act on. The connection used is
+    the same read-only one every question will use, so passing this means questions can run.
+    """
+    import config
+    from scripts.db import clients
+    from scripts.db.introspection import get_tables
+
+    with runtime.use(rt):
+        try:
+            with clients.get_connection() as conn:
+                tables = get_tables(conn)
+        except Exception as exc:  # noqa: BLE001
+            clients.forget_engine(rt.db)
+            raise ConnectionSetupError(describe_database_error(exc, rt.db)) from exc
+
+    where = f'schema "{rt.db.schema}"' if rt.db.dialect == runtime.POSTGRES else f'database "{rt.db.schema}"'
+    if not tables:
+        raise ConnectionSetupError(
+            f"Connected, but {where} has no tables or views this login can read. Check the "
+            "schema name, or grant this user SELECT on the tables."
+        )
+    if len(tables) > config.MAX_INDEX_TABLES:
+        raise ConnectionSetupError(
+            f"{where.capitalize()} has {len(tables)} tables and views; this deployment indexes "
+            f"at most {config.MAX_INDEX_TABLES}. Connect to a smaller schema, or with a login "
+            "that can only see the tables you want to ask about."
+        )
+    return len(tables)
+
+
+def check_llm(settings: runtime.LLMSettings) -> None:
+    """Raises ConnectionSetupError unless the model can answer and call a tool."""
+    from agent import llm
+
+    try:
+        llm.probe(settings)
+    except llm.LLMSetupError as exc:
+        raise ConnectionSetupError(str(exc)) from exc
+
+
+# Providers offered on the setup screen, with the base URL each one's OpenAI-compatible API
+# lives at. Anything else goes through "Other".
+PROVIDERS = {
+    "OpenAI": "https://api.openai.com/v1",
+    "OpenRouter": "https://openrouter.ai/api/v1",
+    "Groq": "https://api.groq.com/openai/v1",
+    "Google Gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "Anthropic": "https://api.anthropic.com/v1",
+    "Mistral": "https://api.mistral.ai/v1",
+    "Azure OpenAI": "https://YOUR-RESOURCE.openai.azure.com/openai/v1",
+    "Other (OpenAI-compatible)": "",
+}
