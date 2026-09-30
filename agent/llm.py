@@ -53,7 +53,14 @@ def _client(settings: runtime.LLMSettings) -> OpenAI:
             client = _clients.get(cache_key)
             if client is None:
                 client = OpenAI(
-                    base_url=settings.base_url, api_key=settings.api_key, timeout=90, max_retries=2
+                    base_url=settings.base_url,
+                    api_key=settings.api_key,
+                    timeout=90,
+                    max_retries=2,
+                    # A public endpoint must not be able to bounce this server on to a
+                    # private address with a redirect: the URL was checked, not where it
+                    # might redirect to.
+                    http_client=openai.DefaultHttpxClient(follow_redirects=False),
                 )
                 _clients[cache_key] = client
     return client

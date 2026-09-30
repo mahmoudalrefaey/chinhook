@@ -9,8 +9,10 @@ Every function here works on the database and model of the current session (see
 runtime.py): the caller wraps its calls in runtime.use(...).
 """
 
+import threading
 import time
 
+import config
 import runtime
 from agent.graph import DEFAULT_MAX_ATTEMPTS, STAGE_TO_KEY, WorkflowError, run_turn
 from agent.nodes import STAGE_EXECUTE, STAGE_GENERATE, STAGE_RETRIEVE, STAGE_SUMMARISE, STAGE_UNDERSTAND
@@ -84,6 +86,7 @@ def answer(
     model_name = model_name or runtime.current().llm.model
     result = _blank_result(model_name)
     started = time.perf_counter()
+    _keep_index_alive()
 
     try:
         result = run_turn(
@@ -102,6 +105,16 @@ def answer(
     if not result.get("timings"):
         result["timings"] = {"total": time.perf_counter() - started}
     return result
+
+
+def _keep_index_alive():
+    """Mark the index as in use, so a chat left open for days does not see it expire."""
+    from scripts.db import retention
+
+    try:
+        retention.touch_if_stale(runtime.current().tenant_id)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def schema_overview():
@@ -130,23 +143,71 @@ def schema_overview():
     ]
 
 
+# One lock per database, so two sessions connecting to the same database at the same moment
+# index it once between them rather than twice side by side; and one server-wide limit on how
+# many databases index at once, since indexing is the heaviest thing this server does.
+_index_locks: dict[str, threading.Lock] = {}
+_index_locks_guard = threading.Lock()
+_index_slots = threading.BoundedSemaphore(max(1, config.MAX_CONCURRENT_INDEX_JOBS))
+
+
+class IndexingRefused(Exception):
+    """The database cannot be indexed on this deployment, for a reason worth showing as is."""
+
+
+def _lock_for(tenant: str) -> threading.Lock:
+    with _index_locks_guard:
+        return _index_locks.setdefault(tenant, threading.Lock())
+
+
 def prepare_index(progress=None):
     """Bring the current database's index up to date, building it the first time.
 
     Only tables whose shape changed since the last run are re-indexed, so calling this for a
     database that is already indexed and unchanged costs one catalog read and nothing else.
-    progress, when given, is called as progress(done, total, message) while it runs.
+    progress, when given, is called as progress(done, total, message) while it runs. Returns
+    how many tables were (re)indexed.
     """
-    from scripts.db.indexing import check_and_index
+    from scripts.db import retention
+    from scripts.db.indexing import check_and_index, get_index_status
 
-    return check_and_index(progress)
+    report = progress or (lambda done, total, message: None)
+    tenant = runtime.current().tenant_id
+    retention.maybe_purge()
+
+    with _lock_for(tenant):
+        status = get_index_status()
+        if not status["index_reachable"]:
+            raise RuntimeError("The search index (Qdrant) could not be reached.")
+        if status["db_tables"] > config.MAX_INDEX_TABLES:
+            raise IndexingRefused(
+                f"This database now has {status['db_tables']} tables and views; this "
+                f"deployment indexes at most {config.MAX_INDEX_TABLES}."
+            )
+        # Registered before anything is created, so the retention cleanup can never take a
+        # half-built index for an abandoned one.
+        retention.touch(tenant)
+        if not status["needs_reindex"] and status["qdrant_tables"]:
+            report(1, 1, "Index is up to date")
+            return 0
+
+        while not _index_slots.acquire(timeout=2):
+            report(0, 1, "Waiting for other databases to finish indexing")
+        try:
+            return check_and_index(progress)
+        finally:
+            _index_slots.release()
 
 
 def delete_index():
     """Remove everything this deployment holds about the current database."""
+    from scripts.db import retention
     from scripts.db.indexing import delete_index as _delete_index
 
-    _delete_index()
+    tenant = runtime.current().tenant_id
+    with _lock_for(tenant):
+        _delete_index()
+        retention.forget(tenant)
 
 
 def describe_index_error(exc: Exception, db=None) -> str:
@@ -164,6 +225,8 @@ def describe_index_error(exc: Exception, db=None) -> str:
             "The search index service is not reachable right now. This is a problem with "
             "this deployment, not with your database; try again in a minute."
         )
+    if isinstance(exc, (IndexingRefused, connection.ConnectionSetupError)):
+        return str(exc)
     if isinstance(exc, runtime.NotConnected):
         return "No database is connected."
     return connection.describe_database_error(exc, db or runtime.current().db)

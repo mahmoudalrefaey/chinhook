@@ -46,7 +46,14 @@ def _engine_key(db: runtime.DatabaseSettings) -> str:
 
 
 def create_engine_for(db: runtime.DatabaseSettings) -> Engine:
-    """A new engine for these settings, every connection it opens set read-only."""
+    """A new engine for these settings, every connection it opens set read-only.
+
+    The host is checked again here, not only on the setup screen: a pool can be opened long
+    after setup, and a name that resolved to a public address then may not now.
+    """
+    from connection import check_host_allowed
+
+    check_host_allowed(db.url.host, db.url.port)
     dialect = dialects.for_settings(db)
     engine = create_engine(
         db.url,

@@ -8,7 +8,10 @@ schema questions will be answered from.
 
 from __future__ import annotations
 
+import ipaddress
 import os
+import socket
+from urllib.parse import urlsplit
 
 from sqlalchemy.engine import URL, make_url
 
@@ -173,6 +176,61 @@ def runtime_from_env() -> runtime.Runtime:
     return runtime.Runtime(db=db, llm=llm)
 
 
+# ---------- which hosts this server may be asked to reach ----------
+
+# Names that only ever resolve inside a private network: the deployment's own neighbours
+# (qdrant.railway.internal, a compose service called "postgres") and the machine itself.
+_PRIVATE_SUFFIXES = (".internal", ".local", ".localhost", ".localdomain", ".lan", ".home.arpa")
+
+
+def check_host_allowed(host: str | None, port: int | None = None) -> None:
+    """Refuse a host that is not on the public internet.
+
+    This server connects to whatever database host and model URL a visitor types in. Left
+    unchecked, "localhost", a private address or a cloud metadata address would let anyone
+    use it to reach the network it runs in: the Qdrant beside it, an internal admin port, the
+    platform's metadata service. Every address the name resolves to has to be a public one.
+    Skipped entirely when ALLOW_PRIVATE_HOSTS is set, for local development. A name that
+    resolves to a public address here and a private one later is not caught; the database
+    connection is checked again whenever a new pool is opened for it.
+    """
+    import config
+
+    if config.ALLOW_PRIVATE_HOSTS:
+        return
+    name = (host or "").strip().strip("[]").lower().rstrip(".")
+    if not name:
+        raise ConnectionSetupError("No host was given.")
+    refused = (
+        f"{host} is not a public address. This app can only reach databases and models on "
+        "the public internet, not on localhost or a private network."
+    )
+    is_literal = True
+    try:
+        ipaddress.ip_address(name)
+    except ValueError:
+        is_literal = False
+    if not is_literal and (name == "localhost" or name.endswith(_PRIVATE_SUFFIXES) or "." not in name):
+        # A name with no dot at all only resolves through a private network's own DNS.
+        raise ConnectionSetupError(refused)
+    try:
+        infos = socket.getaddrinfo(name, port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ConnectionSetupError(f"The host name {host} could not be found. Check it for typos.") from exc
+    for info in infos:
+        address = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
+        if not address.is_global or address.is_multicast:
+            raise ConnectionSetupError(refused)
+
+
+def check_url_allowed(url: str) -> None:
+    """check_host_allowed for the host of an http(s) URL."""
+    parts = urlsplit(url)
+    check_host_allowed(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+
+
 # ---------- checking a connection before it is used ----------
 
 def describe_database_error(exc: Exception, db: runtime.DatabaseSettings) -> str:
@@ -218,6 +276,7 @@ def check_database(rt: runtime.Runtime) -> int:
     from scripts.db import clients
     from scripts.db.introspection import get_tables
 
+    check_host_allowed(rt.db.url.host, rt.db.url.port)
     with runtime.use(rt):
         try:
             with clients.get_connection() as conn:
@@ -245,6 +304,7 @@ def check_llm(settings: runtime.LLMSettings) -> None:
     """Raises ConnectionSetupError unless the model can answer and call a tool."""
     from agent import llm
 
+    check_url_allowed(settings.base_url)
     try:
         llm.probe(settings)
     except llm.LLMSetupError as exc:
