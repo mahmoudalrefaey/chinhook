@@ -1,10 +1,8 @@
 """LangGraph agentic workflow for the Chinook natural-language database chat.
 
-The modules here sit on top of the infrastructure that already works in this repository:
-Azure OpenAI through config.create_azure_client, schema retrieval and SQL execution through
-scripts.db_module, and the validation that run_sql_query already performs. Nothing in
-scripts/ or config.py was replaced; the graph composes what was already there and adds the
-reasoning, task isolation, verification and repair that were missing.
+The modules here sit on top of the rest of the repository: the model through agent.llm, and
+schema retrieval, SQL validation and execution through scripts.db. Every call works on the
+database and model of the current session (see runtime.py).
 
 Import order matters only in that agent.llm is imported by the node modules.
 """

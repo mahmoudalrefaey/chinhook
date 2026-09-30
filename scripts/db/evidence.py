@@ -13,16 +13,30 @@ whenever a table's fingerprint changes, so it never goes stale and needs no code
 the whole database were swapped for something else.
 """
 
-import config
+import runtime
+from scripts.db.clients import dialect as current_dialect
+from scripts.db.clients import schema as current_schema
+from scripts.db.introspection import restart
 from scripts.db.pii import PII_COLUMN
 
 
 def get_sample_rows(conn, table_name: str, limit: int = 3) -> tuple[list[str], list[tuple]]:
-    """A few real rows from a table, with their column names, used to ground the evidence."""
-    with conn.cursor() as cur:
-        cur.execute(f'SELECT * FROM "{table_name}" LIMIT %s', (limit,))
-        columns = [d[0] for d in cur.description]
-        return columns, cur.fetchall()
+    """A few real rows from a table, with their column names, used to ground the evidence.
+
+    A table that cannot be read (a view that errors, a table this login may not select from)
+    gives no rows rather than failing the index: its description is then written from its
+    structure alone.
+    """
+    table = current_dialect().qualified(current_schema(), table_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT * FROM {table} LIMIT {int(limit)}")
+            columns = [d[0] for d in cur.description]
+            return columns, [tuple(row) for row in cur.fetchall()]
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not sample {table_name}: {type(exc).__name__}: {exc}")
+        restart(conn)
+        return [], []
 
 
 def _masked_sample_text(columns: list[str], rows: list[tuple]) -> str:
@@ -48,9 +62,8 @@ def _masked_sample_text(columns: list[str], rows: list[tuple]) -> str:
 def generate_evidence(table_def: str, columns: list[str], sample_rows: list[tuple]) -> str:
     """Infer what a table represents in the real world, from its structure and real data.
 
-    Uses the grounding deployment since this is a short, well-defined summarisation task, not
-    something that needs the larger model's reasoning. It is the same deployment the router
-    and the value-grounding step use, named once in config rather than repeated here.
+    Uses the session's fast model when one was given, since this is a short, well-defined
+    summarisation task, not something that needs the larger model's reasoning.
     """
     sample_text = _masked_sample_text(columns, sample_rows)
     prompt = (
@@ -66,15 +79,15 @@ def generate_evidence(table_def: str, columns: list[str], sample_rows: list[tupl
         f"Sample rows:\n{sample_text}"
     )
     try:
-        client = config.create_azure_client(config.GROUNDING_MODEL)
-        deployment = config.get_model_config(config.GROUNDING_MODEL)["deployment"]
-        resp = client.chat.completions.create(
-            model=deployment,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
+        from agent import llm
+
+        text, _usage = llm.chat_text(
+            runtime.current().llm.small_model,
+            "You describe database tables in one sentence.",
+            prompt,
             max_completion_tokens=120,
         )
-        return resp.choices[0].message.content.strip()
+        return (text or "").strip()
     except Exception as e:
         # A transient failure generating evidence for one table should not fail the whole
         # index. The table still gets indexed, just without the extra context this run.

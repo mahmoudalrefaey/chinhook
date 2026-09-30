@@ -5,65 +5,55 @@ a re-index happens when a table's columns or its foreign keys change, and not ot
 
 Deliberately shape-only, not content-only: on a database sized in the millions of rows,
 hashing every row of every table on every check would itself be the expensive operation this
-exists to avoid. A schema this size changes by migration, not by an UPDATE somewhere inside
-its data, so a column list and a foreign key list are what actually distinguish "this table
-means something different now" from "someone inserted more rows into it", which is the
+exists to avoid. A column list and a foreign key list are what actually distinguish "this
+table means something different now" from "someone inserted more rows into it", which is the
 distinction the description and the join graph in the index care about. Row count is kept as
-a coarse extra signal, read from the planner's own statistics rather than counted directly,
-so it costs nothing beyond a catalog lookup even on a table nobody has ever run COUNT(*)
-against.
+a coarse extra signal, read from the planner's own statistics rather than counted directly.
 """
 
 import hashlib
 import json
 
-from config import QDRANT_COLLECTION_TABLES
-from scripts.db.clients import qdrant
-from scripts.db.introspection import get_foreign_keys, get_table_names
+from scripts.db.clients import qdrant, tables_collection
+from scripts.db.introspection import get_columns, get_foreign_keys, get_row_estimates, get_tables
 
 
 def compute_table_fingerprint(
-    conn, table_name: str, foreign_keys: dict[str, set[str]], schema_name: str = "public"
+    table_name: str,
+    columns: list[tuple[str, str, str, str]],
+    foreign_keys: dict[str, set[str]],
+    row_estimate: int,
+    kind: str = "table",
 ) -> dict:
     """Column shape, joined tables and an approximate row count for one table."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """SELECT column_name, data_type, is_nullable, column_default
-               FROM information_schema.columns
-               WHERE table_schema = %s AND table_name = %s
-               ORDER BY ordinal_position""",
-            (schema_name, table_name),
-        )
-        cols = cur.fetchall()
-
-        cur.execute(
-            "SELECT reltuples FROM pg_class WHERE oid = %s::regclass",
-            (f'"{schema_name}"."{table_name}"',),
-        )
-        row = cur.fetchone()
-        # -1 means the planner has never analysed this table; 0 is the more honest "unknown
-        # yet" starting point for a table that has never been counted at all, and it self
-        # corrects the first time autovacuum or an explicit ANALYZE runs.
-        row_estimate = max(0, int(row[0])) if row and row[0] is not None else 0
-
     joined = sorted(foreign_keys.get(table_name, set()))
     shape_hash = hashlib.sha256(
-        json.dumps({"columns": cols, "joined": joined}, sort_keys=True, default=str).encode()
+        json.dumps(
+            {"columns": [list(c) for c in columns], "joined": joined, "kind": kind},
+            sort_keys=True,
+            default=str,
+        ).encode()
     ).hexdigest()[:16]
 
     return {
         "table_name": table_name,
+        "kind": kind,
         "row_estimate": row_estimate,
         "shape_hash": shape_hash,
     }
 
 
 def get_db_fingerprint(conn) -> dict:
-    """Fingerprint for every table in the database, keyed by table name."""
-    table_names = get_table_names(conn)
+    """Fingerprint for every table and view in the schema, keyed by name."""
+    tables = get_tables(conn)
+    columns = get_columns(conn)
     foreign_keys = get_foreign_keys(conn)
+    estimates = get_row_estimates(conn, tables=tables)
     return {
-        name: compute_table_fingerprint(conn, name, foreign_keys) for name in table_names
+        name: compute_table_fingerprint(
+            name, columns.get(name, []), foreign_keys, estimates.get(name, 0), kind
+        )
+        for name, kind in tables.items()
     }
 
 
@@ -72,19 +62,17 @@ def get_qdrant_fingerprint() -> dict:
 
     Returns an empty dict only when the collection genuinely does not exist yet, meaning
     nothing has ever been indexed. A network problem or any other failure talking to Qdrant
-    is raised rather than swallowed into the same empty result: the two situations call for
-    different responses. "Nothing indexed yet" means build the index. A two-second Qdrant
-    hiccup does not, and treating it as though it did used to turn a brief blip into a full
-    rebuild, complete with a fresh model call for every table.
+    is raised rather than swallowed into the same empty result: "nothing indexed yet" means
+    build the index, and a two-second Qdrant hiccup does not.
     """
-    if not qdrant.collection_exists(QDRANT_COLLECTION_TABLES):
+    if not qdrant.collection_exists(tables_collection()):
         return {}
 
     fingerprint = {}
     offset = None
     while True:
         points, offset = qdrant.scroll(
-            collection_name=QDRANT_COLLECTION_TABLES,
+            collection_name=tables_collection(),
             limit=100,
             offset=offset,
             with_payload=True,
@@ -104,7 +92,7 @@ def compare_fingerprints(db_fp: dict, qdrant_fp: dict) -> tuple[bool, list[str]]
     changed = []
     all_tables = set(db_fp.keys()) | set(qdrant_fp.keys())
 
-    for table in all_tables:
+    for table in sorted(all_tables):
         db_entry = db_fp.get(table)
         qdrant_entry = qdrant_fp.get(table)
 
@@ -112,7 +100,7 @@ def compare_fingerprints(db_fp: dict, qdrant_fp: dict) -> tuple[bool, list[str]]
             changed.append(table)  # Table dropped
         elif qdrant_entry is None:
             changed.append(table)  # New table
-        elif db_entry["shape_hash"] != qdrant_entry["shape_hash"]:
+        elif db_entry["shape_hash"] != qdrant_entry.get("shape_hash"):
             changed.append(table)  # Columns or foreign keys changed
 
     return len(changed) > 0, changed

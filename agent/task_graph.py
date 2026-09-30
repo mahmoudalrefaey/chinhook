@@ -19,7 +19,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agent import llm, schema as schema_store
 from agent import verify as verification
-from agent.nodes.common import BASE_SQL_RULES, _is_meta, _visible_schema
+from agent.nodes.common import _is_meta, _visible_schema
 from agent.state import ChatSession, TaskState, TokenUsage
 
 DEFAULT_MAX_ATTEMPTS = 2
@@ -179,11 +179,12 @@ def route_after_retrieve(state: TaskGraphState) -> str:
 def node_generate(state: TaskGraphState) -> dict:
     task = state["task"]
     model = state["model"]
+    from scripts.db.clients import dialect
     from scripts.db_module import tools
 
     schema_text = _visible_schema(task)
     lines = [
-        BASE_SQL_RULES + schema_text,
+        dialect().prompt_rules + schema_text,
         "",
         "Answer exactly one task with one SELECT statement.",
         f"Task: {task.question or task.raw}",
@@ -259,16 +260,26 @@ def node_generate(state: TaskGraphState) -> dict:
 
 # ---------- check and run: one parse, then a validated, read-only execution ----------
 
-_SYSTEM_SCHEMAS = {"information_schema", "pg_catalog"}
-
-
 def _is_known_table(name: str) -> bool:
+    """Whether a table a query reads is one the connected schema really has.
+
+    A bare name must be one of the connected schema's own tables or views. A name qualified
+    with a schema must be qualified with the connected one, or with the database's own
+    catalog schema (information_schema and the like), which a question about the database
+    itself may read: a query does not get to reach into some other schema the login happens
+    to be able to see just by naming it.
+    """
+    from scripts.db.clients import dialect, schema as connected_schema
+
     schema, _, bare = name.rpartition(".")
-    if bare in schema_store.catalog():
-        return True
-    if schema:
-        return schema.lower() in _SYSTEM_SCHEMAS or schema.lower().startswith("pg_")
-    return name in schema_store.catalog()
+    if not schema:
+        return bare in schema_store.catalog()
+    if schema == connected_schema():
+        return bare in schema_store.catalog()
+    system = dialect().system_schemas
+    return schema.lower() in system or (
+        "pg_catalog" in system and schema.lower().startswith("pg_")
+    )
 
 
 def node_check_and_run(state: TaskGraphState) -> dict:
@@ -281,7 +292,7 @@ def node_check_and_run(state: TaskGraphState) -> dict:
         problem = "no query was produced"
     else:
         try:
-            tree = sqlglot.parse_one(sql, read="postgres")
+            tree = sqlglot.parse_one(sql, read=verification.sql_dialect())
         except Exception as exc:  # noqa: BLE001
             problem = f"the query could not be parsed: {exc}"
 

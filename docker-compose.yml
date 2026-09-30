@@ -23,19 +23,6 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
 
-  # Builds or refreshes the schema index and exits. The app never indexes on its own startup;
-  # this is the one place that writes the index, whether run here, from the "Rebuild index"
-  # button in the sidebar, or as `index` from the terminal CLI.
-  indexer:
-    build: .
-    env_file: .env
-    environment:
-      QDRANT_URL: http://qdrant:6333
-    depends_on:
-      qdrant:
-        condition: service_started
-    command: ["/app/.venv/bin/python", "-m", "scripts.indexer", "--check"]
-
   app:
     build: .
     env_file: .env
@@ -46,8 +33,6 @@ services:
     depends_on:
       qdrant:
         condition: service_started
-      indexer:
-        condition: service_completed_successfully
 
 volumes:
   qdrant-data:

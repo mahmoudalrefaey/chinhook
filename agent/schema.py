@@ -16,19 +16,20 @@ import re
 import time
 from typing import Optional
 
+import runtime
 from agent.state import SchemaCache, split_schema
-from scripts.db.introspection import _INTERNAL_TABLES
 
-_catalog_cache: Optional[dict[str, list[tuple[str, str]]]] = None
-_catalog_cached_at: float = 0.0
-_catalog_last_failure: float = 0.0
 _CATALOG_RETRY_COOLDOWN_SECONDS = 5.0
 _CATALOG_TTL_SECONDS = 300.0
-_index_cache: Optional[dict[str, str]] = None
+# Keyed by the connected database (runtime.Runtime.tenant_id): every session connected to the
+# same database shares one copy, and no session ever reads another database's.
+_catalogs: dict[str, tuple[float, dict[str, list[tuple[str, str]]]]] = {}
+_catalog_failures: dict[str, float] = {}
+_word_indexes: dict[str, dict[str, str]] = {}
 
 
 def table_names() -> list[str]:
-    """Every base table in the database, read from the database itself."""
+    """Every table in the database, read from the database itself."""
     from scripts.db_module import get_connection, get_table_names as _get_table_names
 
     with get_connection() as conn:
@@ -42,42 +43,41 @@ def catalog() -> dict[str, list[tuple[str, str]]]:
     columns instead of guessing at them. Cached with a TTL rather than for the process's
     whole life, so a table added, dropped or renamed outside this process (a migration, a
     restore) is seen again soon rather than only after a restart. A failed introspection
-    returns an empty catalog and remembers the failure only for a short cooldown: a blip in
-    one read should not turn away every question for the rest of the process, however long it
-    runs.
+    returns the last good catalog (or an empty one) and remembers the failure only for a
+    short cooldown: a blip in one read should not turn away every question afterwards.
     """
-    global _catalog_cache, _catalog_cached_at, _catalog_last_failure, _index_cache
-    if _catalog_cache is not None and (time.monotonic() - _catalog_cached_at) < _CATALOG_TTL_SECONDS:
-        return _catalog_cache
-    if _catalog_last_failure and (time.monotonic() - _catalog_last_failure) < _CATALOG_RETRY_COOLDOWN_SECONDS:
-        return _catalog_cache or {}
+    tenant = runtime.current().tenant_id
+    now = time.monotonic()
+    cached = _catalogs.get(tenant)
+    if cached is not None and (now - cached[0]) < _CATALOG_TTL_SECONDS:
+        return cached[1]
+    failed_at = _catalog_failures.get(tenant)
+    if failed_at and (now - failed_at) < _CATALOG_RETRY_COOLDOWN_SECONDS:
+        return cached[1] if cached else {}
 
+    from scripts.db.introspection import get_catalog
     from scripts.db_module import get_connection
 
-    tables: dict[str, list[tuple[str, str]]] = {}
     try:
         with get_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT table_name, column_name, data_type
-                       FROM information_schema.columns
-                       WHERE table_schema = 'public'
-                       ORDER BY table_name, ordinal_position"""
-                )
-                for table, column, dtype in cur.fetchall():
-                    if table in _INTERNAL_TABLES:
-                        # This application's own bookkeeping, not data a question could ever
-                        # legitimately be about. See scripts/db/introspection.py for why.
-                        continue
-                    tables.setdefault(table, []).append((column, dtype))
+            tables = get_catalog(conn)
     except Exception as exc:  # noqa: BLE001
-        _catalog_last_failure = time.monotonic()
+        _catalog_failures[tenant] = time.monotonic()
         print(f"Schema catalog unavailable for this request: {type(exc).__name__}: {exc}")
-        return _catalog_cache or {}
-    _catalog_cache = tables
-    _catalog_cached_at = time.monotonic()
-    _index_cache = None
+        return cached[1] if cached else {}
+    _catalogs[tenant] = (time.monotonic(), tables)
+    _word_indexes.pop(tenant, None)
+    _forget_idle(now)
     return tables
+
+
+def _forget_idle(now: float) -> None:
+    """Drop catalogs nobody has refreshed in an hour, so they do not pile up forever."""
+    for tenant, (stamp, _tables) in list(_catalogs.items()):
+        if now - stamp > 3600:
+            _catalogs.pop(tenant, None)
+            _word_indexes.pop(tenant, None)
+            _catalog_failures.pop(tenant, None)
 
 
 def _singular(word: str) -> str:
@@ -104,9 +104,10 @@ def schema_index() -> dict[str, str]:
     Rebuilding it when the catalog is rebuilt means it cannot fall out of step with what is
     connected.
     """
-    global _index_cache
-    if _index_cache is not None:
-        return _index_cache
+    tenant = runtime.current().tenant_id
+    cached = _word_indexes.get(tenant)
+    if cached is not None:
+        return cached
 
     index: dict[str, str] = {}
     tables = catalog()
@@ -128,7 +129,7 @@ def schema_index() -> dict[str, str]:
     # its failure cooldown is not the same thing and must not be locked in: only a catalog
     # read that actually returned tables gets cached here.
     if tables:
-        _index_cache = index
+        _word_indexes[tenant] = index
     return index
 
 

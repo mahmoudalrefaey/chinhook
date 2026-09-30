@@ -25,14 +25,6 @@ services:
       timeout: 5s
       retries: 10
 
-  indexer:
-    environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/chinook
-      DATABASE_URL_RO: postgresql://chinhook_ro:${CHINOOK_RO_PASSWORD}@postgres:5432/chinook
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   app:
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/chinook

@@ -24,18 +24,6 @@ STAGE_EXECUTE = "Running it against the database"
 STAGE_SUMMARISE = "Putting the answer together"
 
 
-BASE_SQL_RULES = (
-    "You answer questions using this schema, querying a PostgreSQL database. "
-    "Table and column names are case-sensitive — always wrap them in double "
-    "quotes exactly as given below. Use PostgreSQL syntax only "
-    "(e.g. CURRENT_DATE, NOW(), INTERVAL '7 days') — never SQLite or MySQL "
-    "date functions like date('now', ...). "
-    "When matching user-provided text values (names, titles, etc.) in WHERE "
-    "clauses, use ILIKE instead of = or LIKE so matching is case-insensitive "
-    "— the user may type a value in any case. This case-insensitive rule "
-    "applies only to data values, never to table or column identifiers.\n"
-)
-
 _INTENT_ROW_KIND = {
     "count": "count",
     "sum": "count",

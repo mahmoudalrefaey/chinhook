@@ -17,7 +17,6 @@ with that per-task graph into the one workflow a turn actually runs.
 from agent.nodes.answer import node_answer
 from agent.nodes.clarify import node_clarify
 from agent.nodes.common import (
-    BASE_SQL_RULES,
     STAGE_EXECUTE,
     STAGE_GENERATE,
     STAGE_RETRIEVE,
@@ -29,7 +28,6 @@ from agent.nodes.route import node_route
 from agent.nodes.understand import node_understand
 
 __all__ = [
-    "BASE_SQL_RULES",
     "STAGE_EXECUTE",
     "STAGE_GENERATE",
     "STAGE_RETRIEVE",

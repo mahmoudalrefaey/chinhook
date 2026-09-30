@@ -5,15 +5,13 @@ runs as a LangGraph workflow in the agent package. This module keeps its origina
 seam the interface and the command line call, and return everything they display, and adds
 the per-task states, the workflow trace and the token counts the workflow produces.
 
-Retrieval, SQL execution, validation and the model clients are the ones already in the
-repository: agent.nodes and agent.task_graph call scripts.db_module and config for all of
-them.
+Every function here works on the database and model of the current session (see
+runtime.py): the caller wraps its calls in runtime.use(...).
 """
 
 import time
-from concurrent.futures import ThreadPoolExecutor
 
-import config
+import runtime
 from agent.graph import DEFAULT_MAX_ATTEMPTS, STAGE_TO_KEY, WorkflowError, run_turn
 from agent.nodes import STAGE_EXECUTE, STAGE_GENERATE, STAGE_RETRIEVE, STAGE_SUMMARISE, STAGE_UNDERSTAND
 from agent.session import new_chat
@@ -27,8 +25,6 @@ __all__ = [
     "STAGE_TO_KEY",
     "STAGE_UNDERSTAND",
     "answer",
-    "available_models",
-    "compare",
     "new_chat",
     "schema_overview",
 ]
@@ -42,16 +38,11 @@ __all__ = [
 # though nothing here is watching a single task run through them in real time.
 PIPELINE = [
     {"key": "question", "title": "Question", "detail": "Plain language in"},
-    {"key": "retrieve", "title": "Retrieve", "detail": "Azure embedding, Qdrant search"},
-    {"key": "generate", "title": "Write SQL", "detail": "Azure OpenAI with a tool call"},
-    {"key": "execute", "title": "Query", "detail": "Postgres, read only"},
-    {"key": "summarise", "title": "Answer", "detail": "Azure OpenAI writes the reply"},
+    {"key": "retrieve", "title": "Retrieve", "detail": "Schema search in Qdrant"},
+    {"key": "generate", "title": "Write SQL", "detail": "The model, through a tool call"},
+    {"key": "execute", "title": "Query", "detail": "Your database, read only"},
+    {"key": "summarise", "title": "Answer", "detail": "The model writes the reply"},
 ]
-
-
-def available_models():
-    """Model names the configuration knows about, in declaration order."""
-    return list(config.MODEL_CONFIGS.keys())
 
 
 def _blank_result(model_name):
@@ -90,7 +81,7 @@ def answer(
     turns; leaving it None gives the question an empty conversation of its own, which is what
     a caller that is not holding a chat wants.
     """
-    model_name = model_name or config.DEFAULT_MODEL
+    model_name = model_name or runtime.current().llm.model
     result = _blank_result(model_name)
     started = time.perf_counter()
 
@@ -113,61 +104,27 @@ def answer(
     return result
 
 
-def compare(question, models=None, session=None):
-    """Answer the same question with every model at once, each in its own thread.
-
-    scripts.db.clients hands out a separate pooled connection per query rather than one
-    connection shared by everything, so two models running at the same time never touch the
-    same connection.
-    """
-    models = models or available_models()
-    with ThreadPoolExecutor(max_workers=len(models)) as pool:
-        # Each model gets its own conversation: a comparison is a standalone question, and
-        # one model's findings must not become the other's context.
-        futures = {
-            name: pool.submit(answer, question, name, session=session or new_chat())
-            for name in models
-        }
-        return {name: futures[name].result() for name in models}
-
-
 def schema_overview():
-    """Every table in the database with its columns and an approximate row count.
+    """Every table and view in the connected schema, with its columns and approximate rows.
 
-    The count comes from the planner's own pg_class.reltuples estimate, kept current by
-    ANALYZE at index time (see scripts/db/indexing.py), not a live COUNT(*) per table: on a
-    database sized in the millions of rows, a COUNT(*) per table would make this overview
+    The row count comes from the planner's own statistics, not a live COUNT(*) per table: on a
+    database sized in the millions of rows, counting every table would make this overview
     itself the slow thing to load. Nothing is hardcoded; every query here reads the database's
     own catalogs, the same ones the indexer reads.
     """
-    from scripts.db_module import get_connection, get_table_names
+    from scripts.db import get_catalog, get_connection, get_row_estimates, get_tables
 
     with get_connection() as conn:
-        names = get_table_names(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                """SELECT c.relname, GREATEST(c.reltuples, 0)::bigint
-                   FROM pg_class c
-                   JOIN pg_namespace n ON n.oid = c.relnamespace
-                   WHERE n.nspname = 'public' AND c.relkind = 'r'"""
-            )
-            row_estimates = dict(cur.fetchall())
-
-            cur.execute(
-                """SELECT table_name, column_name, data_type
-                   FROM information_schema.columns
-                   WHERE table_schema = 'public'
-                   ORDER BY table_name, ordinal_position"""
-            )
-            columns_by_table: dict[str, list[tuple[str, str]]] = {}
-            for table, column, dtype in cur.fetchall():
-                columns_by_table.setdefault(table, []).append((column, dtype))
+        tables = get_tables(conn)
+        catalog = get_catalog(conn)
+        estimates = get_row_estimates(conn, tables=tables)
 
     return [
         {
             "table": name,
-            "columns": columns_by_table.get(name, []),
-            "rows": int(row_estimates.get(name, 0)),
+            "kind": kind,
+            "columns": catalog.get(name, []),
+            "rows": int(estimates.get(name, 0)),
         }
-        for name in names
+        for name, kind in tables.items()
     ]

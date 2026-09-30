@@ -14,19 +14,34 @@ import re
 from collections import deque
 from typing import Optional
 
-from config import QDRANT_COLLECTION_TABLES, QDRANT_COLLECTION_VALUES
-from scripts.db.clients import embed, qdrant
+from scripts.db.clients import embed, qdrant, tables_collection, values_collection
 
 DEFAULT_TOP_K = 8
 _MAX_JOIN_HOPS = 3
-# A table only belongs in the core set if it is at least this much of the best-matching
-# table's own score: dense similarity on a real schema drops off a cliff after the table a
-# question is actually about, the way "how many customers" scored the customer table at
-# 0.34 and everything else at 0.20 or below, so a fixed top-k took seven tables nothing
-# needed along with the one that mattered. A ratio against the best match, rather than a
-# fixed count, is what lets one obviously-dominant table stay alone and a genuinely
-# multi-table question still keep every table that is actually close to what it named.
+# A table only belongs in the core set if its score is at least this far from the worst
+# match towards the best one. Dense similarity on a real schema drops off after the table a
+# question is actually about, so a fixed top-k took tables nothing needed along with the one
+# that mattered; a cut relative to the best match is what lets one obviously-dominant table
+# stay alone and a genuinely multi-table question keep every table close to what it named.
+# Measured from the worst score rather than from zero because embedding models differ in
+# where their scores sit: a small local model scores every table of a schema between about
+# 0.4 and 0.66 for one question, so any fraction of the best score alone lets all of them in.
 _CORE_SCORE_RATIO = 0.6
+
+
+def close_to_best(scores: list[float], ratio: float = _CORE_SCORE_RATIO) -> list[int]:
+    """Positions of the scores within ratio of the way from the lowest score to the highest.
+
+    Always includes the best one. When every score is the same there is nothing to tell
+    them apart, so all of them count.
+    """
+    if not scores:
+        return []
+    top, low = max(scores), min(scores)
+    if top - low < 1e-9:
+        return list(range(len(scores)))
+    cut = low + ratio * (top - low)
+    return [i for i, score in enumerate(scores) if score >= cut]
 
 
 def _table_name_from_def(table_def: str) -> str:
@@ -35,11 +50,13 @@ def _table_name_from_def(table_def: str) -> str:
 
 def _all_table_points() -> list:
     """Every indexed table point, with its payload. Cheap: one entry per table, not per row."""
+    if not qdrant.collection_exists(tables_collection()):
+        return []
     points: list = []
     offset = None
     while True:
         found, offset = qdrant.scroll(
-            collection_name=QDRANT_COLLECTION_TABLES,
+            collection_name=tables_collection(),
             limit=200,
             offset=offset,
             with_payload=True,
@@ -223,7 +240,7 @@ def retrieve_tables(question: str, top_k: Optional[int] = None) -> list[dict]:
     """Table definitions relevant to a question.
 
     Ordinarily adaptive: a table only makes the core set if its dense score is close to the
-    best match's own (see _CORE_SCORE_RATIO), so one dominant table stays alone rather than
+    best match's own (see close_to_best), so one dominant table stays alone rather than
     dragging along whatever else happened to rank in some fixed top-k. A table the question
     names outright is added regardless of its score. The core set is then expanded with
     whatever sits on the join path between two core tables, since a join target does not
@@ -245,7 +262,7 @@ def retrieve_tables(question: str, top_k: Optional[int] = None) -> list[dict]:
     pool_size = max((top_k or DEFAULT_TOP_K) * 3, 20)
 
     dense_hits = qdrant.query_points(
-        collection_name=QDRANT_COLLECTION_TABLES,
+        collection_name=tables_collection(),
         query=embed(question),
         limit=min(pool_size, len(points)),
     ).points
@@ -257,13 +274,7 @@ def retrieve_tables(question: str, top_k: Optional[int] = None) -> list[dict]:
         core_ids = set(fused or dense_ranking[:top_k])
         core_names = {_table_name(by_id[pid]) for pid in core_ids if pid in by_id}
     else:
-        top_score = dense_hits[0].score if dense_hits else 0
-        close_enough = [
-            hit for hit in dense_hits
-            if top_score > 0 and hit.score >= top_score * _CORE_SCORE_RATIO
-        ]
-        if not close_enough and dense_hits:
-            close_enough = dense_hits[:1]  # the best match always counts, even if score <= 0
+        close_enough = [dense_hits[i] for i in close_to_best([hit.score for hit in dense_hits])]
         core_names = {_table_name(by_id[hit.id]) for hit in close_enough if hit.id in by_id}
         core_names |= _named_tables(question, points)
 
@@ -288,10 +299,10 @@ def search_values(question: str, top_k: int = 10) -> list[dict]:
     holds, not a guess at how the question's words map onto it. "Americans" matches
     Customer.Country = "USA" this way, from the value itself rather than from the word.
     """
-    if not qdrant.collection_exists(QDRANT_COLLECTION_VALUES):
+    if not qdrant.collection_exists(values_collection()):
         return []
     hits = qdrant.query_points(
-        collection_name=QDRANT_COLLECTION_VALUES,
+        collection_name=values_collection(),
         query=embed(question),
         limit=top_k,
     ).points
@@ -354,13 +365,13 @@ def list_indexed_values() -> list[dict]:
     search sees, this shows what its value search sees, both read directly from the index
     rather than through a search over it.
     """
-    if not qdrant.collection_exists(QDRANT_COLLECTION_VALUES):
+    if not qdrant.collection_exists(values_collection()):
         return []
     values: list[dict] = []
     offset = None
     while True:
         points, offset = qdrant.scroll(
-            collection_name=QDRANT_COLLECTION_VALUES,
+            collection_name=values_collection(),
             limit=200,
             offset=offset,
             with_payload=True,

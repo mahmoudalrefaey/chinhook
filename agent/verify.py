@@ -17,6 +17,23 @@ from typing import Any, Optional
 
 import sqlglot
 
+import runtime
+
+
+def sql_dialect() -> str:
+    """The sqlglot dialect of the connected database, for parsing the SQL it was sent.
+
+    Postgres when nothing is connected, which only happens for a caller reading SQL outside
+    any session, such as a test of the parsing itself.
+    """
+    try:
+        from scripts.db.clients import dialect
+
+        return dialect().sqlglot
+    except runtime.NotConnected:
+        return "postgres"
+
+
 # A "top 5" in the user's own words. Used as a cross-check on what the understanding node
 # reported, not as the only source, so a misread "top 5" cannot talk the verifier out of a
 # cardinality check.
@@ -65,7 +82,7 @@ def statement_limit(sql: Optional[str]) -> Optional[int]:
     if not sql:
         return None
     try:
-        expression = sqlglot.parse_one(sql, read="postgres")
+        expression = sqlglot.parse_one(sql, read=sql_dialect())
     except Exception:
         return None
     limit = expression.args.get("limit")
@@ -107,7 +124,7 @@ def referenced_tables(sql: Optional[str]) -> list[str]:
     if not sql:
         return []
     try:
-        expression = sqlglot.parse_one(sql, read="postgres")
+        expression = sqlglot.parse_one(sql, read=sql_dialect())
     except Exception:
         return []
     return tables_in(expression)
@@ -117,7 +134,7 @@ def has_group_by(sql: Optional[str]) -> bool:
     if not sql:
         return False
     try:
-        expression = sqlglot.parse_one(sql, read="postgres")
+        expression = sqlglot.parse_one(sql, read=sql_dialect())
     except Exception:
         return False
     return expression.args.get("group") is not None

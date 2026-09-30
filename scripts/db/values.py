@@ -10,11 +10,11 @@ matter how small the table is; a genre or a country is one even on a table with 
 handful of rows, because the same handful of values keeps coming back.
 """
 
-from psycopg2 import sql
-
+from scripts.db.clients import dialect as current_dialect
+from scripts.db.clients import schema as current_schema
+from scripts.db.introspection import restart
 from scripts.db.pii import PII_COLUMN
 
-_TEXT_TYPES = {"text", "character varying", "character", "citext"}
 _MAX_DISTINCT = 500
 _SAMPLE_LIMIT = _MAX_DISTINCT + 1
 # A column qualifies when its distinct count is small outright, or small relative to how
@@ -25,7 +25,7 @@ _MIN_ABSOLUTE_CARDINALITY = 50
 _MAX_UNIQUE_RATIO = 0.5
 
 
-def _text_columns(conn, table_name: str, schema_name: str = "public") -> list[str]:
+def _text_columns(columns: list[tuple[str, str]]) -> list[str]:
     """Text columns worth considering for value indexing, contact-detail columns excluded.
 
     A column that looks like an email, a phone number or a person's name is never a category
@@ -33,45 +33,41 @@ def _text_columns(conn, table_name: str, schema_name: str = "public") -> list[st
     column of real people's contact details look "low cardinality" by table size alone, which
     is exactly the case this rules out before the cardinality check ever runs.
     """
-    with conn.cursor() as cur:
-        cur.execute(
-            """SELECT column_name FROM information_schema.columns
-               WHERE table_schema = %s AND table_name = %s AND data_type = ANY(%s)
-               ORDER BY ordinal_position""",
-            (schema_name, table_name, list(_TEXT_TYPES)),
-        )
-        return [row[0] for row in cur.fetchall() if not PII_COLUMN.search(row[0])]
+    text_types = current_dialect().text_types
+    return [
+        column
+        for column, dtype in columns
+        if dtype.lower() in text_types and not PII_COLUMN.search(column)
+    ]
 
 
-def _row_estimate(conn, table_name: str, schema_name: str = "public") -> int:
-    """The planner's own row estimate, not a real count: this only has to gate a heuristic."""
-    with conn.cursor() as cur:
-        cur.execute("SELECT reltuples FROM pg_class WHERE oid = %s::regclass", (f'"{schema_name}"."{table_name}"',))
-        row = cur.fetchone()
-        return max(0, int(row[0])) if row and row[0] is not None else 0
-
-
-def low_cardinality_values(conn, table_name: str, schema_name: str = "public") -> dict[str, list[str]]:
+def low_cardinality_values(
+    conn, table_name: str, columns: list[tuple[str, str]], row_estimate: int
+) -> dict[str, list[str]]:
     """Distinct, non-null values of each text column that behaves like a fixed set of categories.
 
     Each column is checked with a single query capped by LIMIT, so the cost of ruling a
     high-cardinality column out is bounded no matter how large the table is: the scan stops
     the moment it has collected one more distinct value than the cap allows, rather than
-    counting every one of them first.
+    counting every one of them first. A column whose scan fails or runs out of time is
+    skipped, not the whole table: it only means that column's values are not searchable.
     """
-    row_estimate = _row_estimate(conn, table_name, schema_name)
+    dialect = current_dialect()
+    table = dialect.qualified(current_schema(), table_name)
     result: dict[str, list[str]] = {}
-    table_ident = sql.Identifier(schema_name, table_name)
-    for column in _text_columns(conn, table_name, schema_name):
-        column_ident = sql.Identifier(column)
-        with conn.cursor() as cur:
-            cur.execute(
-                sql.SQL(
-                    "SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL LIMIT %s"
-                ).format(col=column_ident, table=table_ident),
-                (_SAMPLE_LIMIT,),
-            )
-            values = [row[0] for row in cur.fetchall()]
+    for column in _text_columns(columns):
+        col = dialect.quote(column)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT DISTINCT {col} FROM {table} WHERE {col} IS NOT NULL "
+                    f"LIMIT {_SAMPLE_LIMIT}"
+                )
+                values = [row[0] for row in cur.fetchall()]
+        except Exception as exc:  # noqa: BLE001
+            print(f"Skipping values of {table_name}.{column}: {type(exc).__name__}: {exc}")
+            restart(conn)
+            continue
         count = len(values)
         if count == 0 or count > _MAX_DISTINCT:
             continue

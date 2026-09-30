@@ -1,133 +1,170 @@
-"""The clients the database tooling shares, and the pool that owns the Postgres connections.
+"""The clients the database tooling shares: connection pools, Qdrant, and the embedder.
 
-Qdrant's client is created here but does not connect until first used, which is how the
-client library already behaves. Postgres does not behave that way on its own, which is why
-it gets a pool instead of a bare connection: a pool is created lazily on first use rather
-than at import, connections are checked out for the duration of one operation and always
-returned, and a browser session's own thread never blocks another session's on a shared,
-half-finished transaction.
+Every session connects to its own database, so there is one SQLAlchemy engine (and with it
+one small connection pool) per database in use, created the first time a session asks for it
+and dropped once enough other databases have been used since. The engine is chosen by the
+current session's own settings (see runtime.py), so a query can never be sent down another
+session's connection.
 
-The pool connects with DATABASE_URL_RO, which points at a role with SELECT only wherever that
-role has been created (see docs/READ_ONLY_ROLE.md). Falling back to DATABASE_URL when no
-separate read-only role exists keeps an unconfigured deployment running, just without the
-database's own guarantee that a write cannot happen even if every check in the application
-layer has a gap.
+Every connection an engine opens is switched to read-only before anything else runs on it
+(see scripts/db/dialects.py). That is the guarantee that holds even when a user connects with
+a login that could write, and even if every check above it had a gap: the database itself
+refuses the write.
+
+Qdrant is the deployment's own, configured once in config.py. What differs per session is
+which collections in it are read and written: one pair per database (see tables_collection).
 """
 
-import atexit
-import threading
+from __future__ import annotations
 
-from psycopg2 import pool as psycopg2_pool
+import contextlib
+import hashlib
+import threading
+from collections import OrderedDict
+from typing import Iterator
+
 from qdrant_client import QdrantClient
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 
 import config
-from config import DATABASE_URL, DATABASE_URL_RO, QDRANT_URL
+import runtime
+from scripts.db import dialects
 
-qdrant = QdrantClient(url=QDRANT_URL, api_key=config.QDRANT_API_KEY)
+qdrant = QdrantClient(url=config.QDRANT_URL, api_key=config.QDRANT_API_KEY, timeout=30)
 
-_pool_lock = threading.Lock()
-_pool = None
+# ---------- relational database ----------
 
-
-def _create_pool():
-    dsn = DATABASE_URL_RO or DATABASE_URL
-    if not dsn:
-        raise RuntimeError(
-            "DATABASE_URL is not set. Nothing that talks to Postgres can run without it."
-        )
-    # SSL mode is whatever the URL itself says (sslmode=require for a hosted database,
-    # sslmode=disable for a local one such as the CI Postgres service). Forcing "require"
-    # here used to override that and refuse to connect to any database that does not speak
-    # TLS, local development and CI included.
-    return psycopg2_pool.ThreadedConnectionPool(1, 10, dsn)
+_MAX_ENGINES = 32
+_engines: OrderedDict[str, Engine] = OrderedDict()
+_engines_lock = threading.Lock()
 
 
-def _get_pool():
-    """The shared pool, created on first use.
+def _engine_key(db: runtime.DatabaseSettings) -> str:
+    rendered = db.url.render_as_string(hide_password=False)
+    return hashlib.sha256(f"{rendered}\x1f{db.ssl_mode}".encode("utf-8")).hexdigest()
 
-    Double-checked locking rather than a bare check-then-create: two threads racing to
-    create the pool at the same moment used to be able to each open their own connection and
-    leave one leaked, which is the same shape of bug this replaces at the connection level.
+
+def create_engine_for(db: runtime.DatabaseSettings) -> Engine:
+    """A new engine for these settings, every connection it opens set read-only."""
+    dialect = dialects.for_settings(db)
+    engine = create_engine(
+        db.url,
+        pool_size=2,
+        # Several tasks of one question run at once, each with its own connection.
+        max_overflow=6,
+        pool_timeout=30,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args=dialect.connect_args(db),
+    )
+    event.listen(engine, "connect", lambda dbapi_conn, _record: dialect.configure_session(dbapi_conn))
+    return engine
+
+
+def engine() -> Engine:
+    """The current session's engine, created on first use and reused after that.
+
+    Least recently used engines are disposed once more than a handful of databases are in use
+    at once, so a busy public deployment does not hold a pool open for every database anyone
+    has ever connected to.
     """
-    global _pool
-    if _pool is None:
-        with _pool_lock:
-            if _pool is None:
-                _pool = _create_pool()
-                atexit.register(_pool.closeall)
-    return _pool
+    db = runtime.current().db
+    key = _engine_key(db)
+    with _engines_lock:
+        found = _engines.get(key)
+        if found is not None:
+            _engines.move_to_end(key)
+            return found
+        created = create_engine_for(db)
+        _engines[key] = created
+        while len(_engines) > _MAX_ENGINES:
+            _old_key, old = _engines.popitem(last=False)
+            old.dispose()
+        return created
 
 
-class _CheckedOutConnection:
-    """One connection, borrowed from the pool for the lifetime of a single `with` block.
+@contextlib.contextmanager
+def get_connection() -> Iterator:
+    """A DB-API connection borrowed from the current session's pool, for one `with` block.
 
-    Always returned to the pool on the way out, success or failure, so a caller that raises
-    partway through a query cannot leak a connection the way the old single shared connection
-    could leak a broken transaction. The connection is rolled back before it goes back to the
-    pool: with a read-only role there is nothing to commit, and rolling back is what clears
-    whatever transaction and session settings, such as a LOCAL statement_timeout, the caller
-    used, so the next borrower starts clean.
+    Everything run on it happens inside one read-only transaction with a time limit (see
+    Dialect.start). Always handed back on the way out, rolled back first so whatever transaction the caller
+    left open, and any LOCAL setting it made, does not reach the next borrower. A connection
+    that cannot even roll back is thrown away rather than returned broken.
     """
-
-    def __enter__(self):
-        self._pool = _get_pool()
-        self._conn = self._pool.getconn()
-        return self._conn
-
-    def __exit__(self, exc_type, exc, tb):
+    conn = engine().raw_connection()
+    try:
+        with conn.cursor() as cur:
+            dialect().start(cur, dialects.DEFAULT_TIMEOUT_MS)
+        yield conn
+    finally:
         try:
-            self._conn.rollback()
+            conn.rollback()
         except Exception:  # noqa: BLE001
-            # The connection itself is no longer usable. Tell the pool to drop it instead of
-            # returning something broken to the next caller, who would otherwise inherit an
-            # error that has nothing to do with their own query.
-            try:
-                self._pool.putconn(self._conn, close=True)
-            except Exception:  # noqa: BLE001
-                pass
-            return
-        self._pool.putconn(self._conn)
+            conn.invalidate()
+        conn.close()
 
 
-def get_connection():
-    """A connection checked out from the shared pool, for use as `with get_connection() as conn:`.
-
-    Nothing connects to Postgres just by importing this module or calling this function; the
-    pool itself, and the one connection this call hands out, are both created only once
-    something actually needs them.
-    """
-    return _CheckedOutConnection()
+def dialect() -> dialects.Dialect:
+    """The SQL dialect of the current session's database."""
+    return dialects.for_settings(runtime.current().db)
 
 
-def get_maintenance_connection():
-    """A plain, unpooled connection using DATABASE_URL rather than the read-only pool.
+def schema() -> str:
+    """The schema of the current session's database that questions are answered from."""
+    return runtime.current().db.schema
 
-    For the one kind of thing indexing needs that a SELECT-only role cannot do: ANALYZE,
-    which Postgres treats as a write against its own catalogs (it updates pg_class.reltuples
-    and pg_statistic) and refuses to run under a read-only role, the same way it refuses an
-    INSERT. Not pooled, because indexing runs rarely, never concurrently with itself, and
-    closes this connection as soon as it is done with it.
-    """
-    import psycopg2
 
-    return psycopg2.connect(DATABASE_URL)
+# ---------- Qdrant collections ----------
+
+def _collection_base() -> str:
+    return f"{config.QDRANT_COLLECTION_PREFIX}_{runtime.current().tenant_id}"
+
+
+def tables_collection() -> str:
+    """This database's table definitions: one point per table."""
+    return f"{_collection_base()}_tables"
+
+
+def values_collection() -> str:
+    """This database's low-cardinality values: one point per (table, column, value)."""
+    return f"{_collection_base()}_values"
+
+
+# ---------- embeddings ----------
+# One model per process, loaded on first use and shared by every session: it holds no state
+# about any one of them, and ONNX Runtime inference is safe to call from several threads.
+
+_embedder = None
+_embedder_lock = threading.Lock()
+
+
+def _embedding_model():
+    global _embedder
+    if _embedder is None:
+        with _embedder_lock:
+            if _embedder is None:
+                from fastembed import TextEmbedding
+
+                _embedder = TextEmbedding(model_name=config.EMBED_MODEL, cache_dir=config.EMBED_CACHE_DIR)
+    return _embedder
+
+
+def embedding_size() -> int:
+    """The vector size the configured embedding model produces."""
+    from fastembed import TextEmbedding
+
+    return TextEmbedding.get_embedding_size(config.EMBED_MODEL)
 
 
 def embed(text: str) -> list[float]:
-    return embed_batch([text])[0]
+    """The embedding of a search query: a question, or one word of one."""
+    return next(iter(_embedding_model().query_embed(text))).tolist()
 
 
 def embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embeddings for several texts in one Azure OpenAI call.
-
-    Used at index time, where a table's description and dozens or hundreds of a column's
-    distinct values all need embedding: one round trip for the whole batch rather than one
-    per text is what keeps indexing a large schema from being dominated by network latency.
-    A single query at ask time is just a batch of one.
-    """
+    """Embeddings for several documents being indexed, computed as one batch."""
     if not texts:
         return []
-    client = config.create_embedding_client()
-    response = client.embeddings.create(input=texts, model=config.EMBED_MODEL)
-    by_index = {item.index: item.embedding for item in response.data}
-    return [by_index[i] for i in range(len(texts))]
+    return [vector.tolist() for vector in _embedding_model().passage_embed(texts, batch_size=64)]

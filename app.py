@@ -1,8 +1,6 @@
 """Web interface for asking the Chinook database questions in plain language.
 
-Run it with the command in the "Getting started" section of README.md. The command line
-version in main.py still works exactly as before, and nothing it depends on is changed by
-this file.
+Run it with the command in the "Getting started" section of README.md.
 
 Chat bubbles are written as raw HTML rather than through st.chat_message or a keyed
 container. Streamlit wraps every markdown element in its own internal layout box, and one of
@@ -55,8 +53,10 @@ try:
     from ui.render import as_frame, bubble, escape_text, pipeline_html, text_to_html, thinking
     import chat_engine
     import config
+    import connection
     import rate_limit
-    from scripts.indexer import get_index_status, run_full_reindex
+    import runtime
+    from scripts.db import full_reindex, get_index_status
 except Exception as exc:  # noqa: BLE001
     # escape_text is one of the names this same try was attempting to import, so it cannot
     # be trusted to exist if the failure happened before that import completed. The
@@ -115,8 +115,29 @@ if not _require_passphrase():
     st.stop()
 
 
+# ---------- connection ----------
+# Read from the environment for now; the setup screen that lets each visitor enter their own
+# database and model replaces this.
+if st.session_state.get("runtime") is None:
+    try:
+        st.session_state.runtime = connection.runtime_from_env()
+    except Exception as exc:  # noqa: BLE001
+        runtime.activate(None)
+        st.markdown(
+            '<div class="notice"><strong>No database and model are configured.</strong><br>'
+            f"{escape_text(f'{type(exc).__name__}: {exc}')}</div>",
+            unsafe_allow_html=True,
+        )
+        st.stop()
+runtime.activate(st.session_state.runtime)
+TENANT = st.session_state.runtime.tenant_id
+
+
+# Every cached value is keyed by the connected database as well as by whatever the function
+# itself takes: st.cache_data is shared by every session on this server, and a cache keyed by
+# nothing would hand one visitor's schema to another.
 @st.cache_data(ttl=120, show_spinner=False)
-def cached_status():
+def cached_status(tenant):
     status = get_index_status()
     return {
         "db": status["db_tables"],
@@ -126,19 +147,19 @@ def cached_status():
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def cached_schema():
+def cached_schema(tenant):
     return chat_engine.schema_overview()
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def cached_indexed_tables():
+def cached_indexed_tables(tenant):
     from scripts.db_module import list_indexed_tables
 
     return list_indexed_tables()
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def cached_indexed_values():
+def cached_indexed_values(tenant):
     from scripts.db_module import list_indexed_values
 
     return list_indexed_values()
@@ -345,7 +366,7 @@ def render_failure(result):
 
 # ---------- state ----------
 
-for name, default in [("messages", []), ("pending", None), ("comparison", None),
+for name, default in [("messages", []), ("pending", None),
                       ("session", None), ("answered", {}),
                       ("rate_bucket", rate_limit.new_session_bucket())]:
     if name not in st.session_state:
@@ -357,36 +378,12 @@ def chat_session():
 
     Held in session_state next to the messages, so clearing the messages also drops the
     conversation the agent was reasoning over, and a new chat starts from nothing. It is
-    never a module level or otherwise shared value, so one visitor's chat cannot reach
-    another's.
-
-    The chat's id lives in the page's own URL, not only in session_state, and every turn is
-    saved under that id (see agent/persistence.py). Session state itself does not survive a
-    restart of the app process, which used to mean a browser tab still open across a restart
-    kept chatting as though nothing had happened, while the agent underneath it had silently
-    forgotten everything said before. Reopening the same URL after a restart now reloads that
-    same conversation's context instead of starting blind. What does not come back is the
-    chat bubbles themselves, which are display state rather than the conversation record the
-    agent reasons from; only that record is what this restores.
+    never a module level or otherwise shared value, and never written anywhere, so one
+    visitor's chat cannot reach another's.
     """
     if st.session_state.session is None:
-        from agent import persistence
-
-        chat_id = st.query_params.get("chat")
-        restored = persistence.load(chat_id) if chat_id else None
-        if restored is not None:
-            st.session_state.session = restored
-        else:
-            st.session_state.session = chat_engine.new_chat()
-            st.query_params["chat"] = st.session_state.session.session_id
+        st.session_state.session = chat_engine.new_chat()
     return st.session_state.session
-
-
-def _save_chat_session():
-    from agent import persistence
-
-    if st.session_state.session is not None:
-        persistence.save(st.session_state.session)
 
 
 # ---------- sidebar ----------
@@ -395,17 +392,12 @@ with st.sidebar:
     st.markdown('<div class="side-brand">Chinook <span>Chat</span></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="side-heading">Model</div>', unsafe_allow_html=True)
-    models = chat_engine.available_models()
-    model = st.selectbox(
-        "Model",
-        models,
-        index=models.index(config.DEFAULT_MODEL) if config.DEFAULT_MODEL in models else 0,
-        label_visibility="collapsed",
-    )
+    model = st.session_state.runtime.llm.model
+    st.markdown(f'<div class="timing">{escape_text(model)}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="side-heading">Index</div>', unsafe_allow_html=True)
     try:
-        status = cached_status()
+        status = cached_status(TENANT)
         pill = (
             '<span class="pill pill-warn">stale</span>'
             if status["stale"]
@@ -430,7 +422,7 @@ with st.sidebar:
     if st.button("Rebuild index", type="primary"):
         with st.spinner("Rebuilding"):
             try:
-                count = run_full_reindex()
+                count = full_reindex()
                 cached_status.clear()
                 st.success(f"Indexed {count} tables")
             except Exception as exc:  # noqa: BLE001
@@ -455,9 +447,6 @@ with st.sidebar:
             st.session_state.messages = []
             st.session_state.session = None
             st.session_state.answered = {}
-            # The old chat's id would otherwise still be sitting in the URL, so the very
-            # next question would load the conversation just cleared right back in.
-            st.query_params.pop("chat", None)
             st.rerun()
 
 
@@ -470,7 +459,7 @@ banner = ROOT / "assets/banner.png"
 if banner.exists():
     st.image(str(banner), width="stretch")
 
-chat_tab, compare_tab, schema_tab, index_tab = st.tabs(["Chat", "Compare models", "Schema", "Index"])
+chat_tab, schema_tab, index_tab = st.tabs(["Chat", "Schema", "Index"])
 
 
 # ---------- chat ----------
@@ -607,9 +596,6 @@ with chat_tab:
                 )
                 diagram.empty()
                 slot.empty()
-                # Saved regardless of whether the turn succeeded: a failed turn, or one still
-                # waiting on a clarification, is exactly the state a restart should not erase.
-                _save_chat_session()
 
                 if result["ok"] and result.get("answer"):
                     if not streamed:
@@ -639,82 +625,6 @@ with chat_tab:
                 st.rerun()
 
 
-# ---------- model comparison ----------
-
-with compare_tab:
-    st.markdown('<div class="page-title">Put both models on the same question</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<div class="page-subtitle">The same question goes to both deployments at the same '
-        "time, and the answers sit side by side with the SQL each one wrote and how long it "
-        "took.</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
-
-    # A fixed chat_input at the bottom instead of a text_input near the top plus a separate
-    # "Run" button, so asking a second question here works the same way it does on the Chat
-    # tab: type, press Enter, no need to scroll back up to reach the question field again.
-    asked = st.chat_input("Ask a question to compare across both models", key="compare_input")
-
-    if asked:
-        allowed, notice = rate_limit.check(st.session_state.rate_bucket)
-        if not allowed:
-            st.markdown(f'<div class="notice">{escape_text(notice)}</div>', unsafe_allow_html=True)
-        else:
-            progress = st.empty()
-            progress.markdown(thinking("Asking every model"), unsafe_allow_html=True)
-            outcomes = chat_engine.compare(asked)
-            progress.empty()
-            st.session_state.comparison = {"question": asked, "results": outcomes}
-
-    comparison = st.session_state.comparison
-    if comparison:
-        st.markdown(
-            f'<div class="asked">{escape_text(comparison["question"])}</div>',
-            unsafe_allow_html=True,
-        )
-        columns = st.columns(len(comparison["results"]))
-
-        fastest = min(
-            (r["timings"].get("total", 9e9) for r in comparison["results"].values()),
-            default=0,
-        )
-
-        for column, (name, result) in zip(columns, comparison["results"].items(), strict=True):
-            with column:
-                total = result.get("timings", {}).get("total", 0)
-                badge = '<span class="pill pill-ok">fastest</span>' if total == fastest else ""
-                st.markdown(
-                    f'<div class="compare-head"><span class="compare-name">{escape_text(name)}</span>'
-                    f"{badge}</div>",
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f'<div class="stat"><span class="stat-label">Total</span>'
-                    f'<span class="stat-value">{total:.1f}s</span></div>',
-                    unsafe_allow_html=True,
-                )
-
-                if result["ok"] and result.get("answer"):
-                    # Rendered the same way the main chat renders an answer: as Markdown,
-                    # sanitised against an allowlist. This panel used to place the answer
-                    # directly into the page with no filtering of any kind, the one spot in
-                    # the app where that was true.
-                    st.markdown(
-                        f'<div class="compare-answer">{text_to_html(result["answer"])}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if result.get("sql"):
-                        st.markdown('<div class="panel-label">SQL</div>', unsafe_allow_html=True)
-                        st.code(result["sql"], language="sql")
-                    frame = as_frame(result)
-                    if frame is not None:
-                        st.dataframe(frame, width="stretch", hide_index=True)
-                else:
-                    render_failure(result)
-
-
 # ---------- schema ----------
 
 with schema_tab:
@@ -728,7 +638,7 @@ with schema_tab:
     st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
 
     try:
-        tables = cached_schema()
+        tables = cached_schema(TENANT)
         totals = st.columns(3)
         figures = [
             ("Tables", f"{len(tables)}"),
@@ -772,8 +682,8 @@ with index_tab:
     st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
 
     try:
-        indexed_tables = cached_indexed_tables()
-        indexed_values = cached_indexed_values()
+        indexed_tables = cached_indexed_tables(TENANT)
+        indexed_values = cached_indexed_values(TENANT)
 
         totals = st.columns(2)
         figures = [

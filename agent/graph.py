@@ -245,9 +245,9 @@ def run_turn(
     result rather than raised, so the interface renders a message rather than a traceback.
     on_token, when given, is called with each chunk of the reply as the answer node writes it.
     """
-    import config
+    import runtime
 
-    model = model or config.DEFAULT_MODEL
+    model = model or runtime.current().llm.model
     session = session if session is not None else new_chat()
     timing = Timing(on_stage)
     started = time.perf_counter()
