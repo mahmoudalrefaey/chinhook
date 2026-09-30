@@ -2,7 +2,7 @@
 
 # Chinook Database Chat
 
-![Our Banner](assets/readme_banner.png)
+![Our Banner](assets/banner.png)
 
 ### Ask your PostgreSQL database questions in plain English.
 
