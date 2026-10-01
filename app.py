@@ -1,6 +1,6 @@
 """Web interface for asking a connected database questions in plain language.
 
-Run it with the command in the "Getting started" section of README.md.
+The Streamlit page. Deployed from the Dockerfile; see README.md for how to run and configure it.
 
 Chat bubbles are written as raw HTML rather than through st.chat_message or a keyed
 container. Streamlit wraps every markdown element in its own internal layout box, and one of
@@ -18,7 +18,7 @@ import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).parent
-ICON = ROOT / "assets" / "icon.svg"
+ICON = ROOT / "static" / "icon.svg"
 
 st.set_page_config(
     page_title="Chinhook · Chat with your database",
@@ -38,7 +38,7 @@ EXAMPLE_QUESTIONS = [
 
 
 def load_styles():
-    css = (ROOT / "assets" / "styles.css").read_text(encoding="utf-8")
+    css = (ROOT / "chinhook" / "ui" / "styles.css").read_text(encoding="utf-8")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
@@ -52,13 +52,13 @@ try:
     # the top of this file instead, well before this point, which meant any failure in that
     # whole chain had already happened and crashed the page with a raw traceback by the time
     # this except clause could have caught anything.
-    from ui.render import as_frame, bubble, escape_text, pipeline_html, text_to_html, thinking
-    import chat_engine
-    import config
-    import connection
-    import rate_limit
-    import runtime
-    from scripts.db import get_index_status
+    from chinhook.ui.render import as_frame, bubble, escape_text, pipeline_html, text_to_html, thinking
+    from chinhook import chat_engine
+    from chinhook import config
+    from chinhook import connection
+    from chinhook import rate_limit
+    from chinhook import runtime
+    from chinhook.db.indexing import get_index_status
 except Exception as exc:  # noqa: BLE001
     # escape_text is one of the names this same try was attempting to import, so it cannot
     # be trusted to exist if the failure happened before that import completed. The
