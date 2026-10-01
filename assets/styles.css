@@ -523,6 +523,14 @@ h1, h2, h3, h4 {
     transform: scale(1.06);
 }
 
+/* The line under the chat input, in the same bottom bar. */
+.chat-footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
 [data-testid="stTextInput"] input {
     border-radius: var(--radius-sm);
     border-color: var(--line);

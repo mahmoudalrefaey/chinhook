@@ -705,6 +705,13 @@ def chat_page():
     # Read before anything else on the page is drawn, so a question submitted this run is
     # already known to the welcome copy below, which it hides the same run it was asked.
     question = st.chat_input("Ask a question about your data")
+    # Written to the same bar Streamlit pins to the bottom of the window, after the input, so it
+    # sits directly under it and stays there however long the conversation gets.
+    st.bottom.markdown(
+        '<div class="chat-footer">Chinhook Supported &amp; Sponsored by GBG Global Brands Group. '
+        "All rights reserved</div>",
+        unsafe_allow_html=True,
+    )
     if st.session_state.pending:
         question = st.session_state.pending
         st.session_state.pending = None
