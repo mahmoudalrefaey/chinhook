@@ -18,7 +18,7 @@ Anything that breaks one of the promises the app makes, for example:
 - a query that writes to, or changes settings on, a connected database
 - one visitor reaching another visitor's connection, chat, schema or index
 - the server being made to connect to a private or internal address (see
-  `connection.check_host_allowed`)
+  `check_host_allowed` in `chinhook/connection.py`)
 - a database password or model API key being stored, logged or shown anywhere
 - script injection through a model's reply or a database value
 
