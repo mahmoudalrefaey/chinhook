@@ -1,6 +1,6 @@
-# The web app. Qdrant is a separate service reached by URL (see docker-compose.yml and
-# docs/DEPLOYMENT.md), and each visitor's database and model are reached by whatever they
-# enter on the setup screen, so nothing about this image is specific to any of them.
+# The web app. Qdrant is a separate service reached by QDRANT_URL (see README.md), and each
+# visitor's database and model are reached by whatever they enter on the setup screen, so
+# nothing about this image is specific to any of them.
 
 FROM python:3.12-slim
 

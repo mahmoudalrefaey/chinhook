@@ -1,7 +1,7 @@
 [project]
 name = "chinhook"
 version = "0.1.0"
-description = "Chinhook's Requirements"
+description = "Ask a PostgreSQL or MySQL database questions in plain language."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -16,7 +16,6 @@ dependencies = [
     "pandas>=3.0.6",
     "psycopg2-binary>=2.9.13",
     "pymysql[rsa]>=1.2",
-    "python-dotenv>=1.2.3",
     "qdrant-client>=1.19.1",
     "sqlalchemy>=2.0",
     "sqlglot>=30.19.0",
@@ -25,29 +24,4 @@ dependencies = [
     # interface has no Streamlit to run on.
     "streamlit>=1.40",
 ]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.0.0",
-    "ruff>=0.16.9",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-    "integration: needs a reachable Postgres and Qdrant; skipped when they are not",
-    "llm: needs a real model (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL), on top of integration's needs",
-    "databases: needs Qdrant and TEST_PG_URL and/or TEST_MYSQL_URL; a backend with no URL is skipped",
-]
-
-[tool.ruff]
-line-length = 100
-target-version = "py312"
-
-[tool.ruff.lint]
-# A conservative starting set for a codebase with no lint history: real correctness signals
-# (unused imports and names, undefined names, bare except) rather than a style rewrite of
-# every file that has never been linted before.
-select = ["E", "F", "B"]
-ignore = ["E501"]  # line length is a soft preference here, not a build-breaking rule
 
