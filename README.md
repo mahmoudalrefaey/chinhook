@@ -2,7 +2,7 @@
 
 # Chinhook Database Chat
 
-![Our Banner](assets/banner.png)
+![Our Banner](static/banner.png)
 
 ### Ask your PostgreSQL or MySQL database questions in plain language.
 

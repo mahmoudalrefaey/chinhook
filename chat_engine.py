@@ -178,7 +178,12 @@ def prepare_index(progress=None):
     with _lock_for(tenant):
         status = get_index_status()
         if not status["index_reachable"]:
-            raise RuntimeError("The search index (Qdrant) could not be reached.")
+            # The URL and the underlying error, for whoever runs this deployment: it is shown
+            # under "Technical detail", and never includes the API key.
+            raise RuntimeError(
+                f"The search index (Qdrant) at {config.QDRANT_URL} could not be reached: "
+                f"{status['index_error']}"
+            )
         if status["db_tables"] > config.MAX_INDEX_TABLES:
             raise IndexingRefused(
                 f"This database now has {status['db_tables']} tables and views; this "

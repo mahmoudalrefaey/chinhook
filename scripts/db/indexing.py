@@ -348,12 +348,14 @@ def get_index_status() -> dict:
     with get_connection() as conn:
         db_fp = get_db_fingerprint(conn)
 
+    error = ""
     try:
         qdrant_fp = get_qdrant_fingerprint()
         reachable = True
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         qdrant_fp = {}
         reachable = False
+        error = f"{type(exc).__name__}: {exc}"
 
     needs_reindex, changed = compare_fingerprints(db_fp, qdrant_fp) if reachable else (False, [])
 
@@ -363,6 +365,7 @@ def get_index_status() -> dict:
         "needs_reindex": needs_reindex,
         "changed_tables": changed,
         "index_reachable": reachable,
+        "index_error": error,
     }
 
 

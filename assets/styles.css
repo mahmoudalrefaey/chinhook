@@ -71,7 +71,6 @@ html, body, .stApp,
 [data-testid="stHeadingContainer"] *,
 [data-baseweb="select"], [data-baseweb="select"] *,
 [data-baseweb="popover"] li,
-[data-baseweb="tab"], [data-baseweb="tab"] *,
 .stApp button, .stApp input, .stApp textarea, .stApp select,
 .stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4,
 .stApp [data-testid="stDataFrame"] {
@@ -83,9 +82,11 @@ code, pre, code *, pre *,
     font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace !important;
 }
 
+/* The chat input sits in Streamlit's own bottom bar, which takes its own room in the page, so
+   the content only needs a little space under it rather than room for a bar laid over it. */
 .block-container {
     padding-top: 1.2rem !important;
-    padding-bottom: 7rem !important;
+    padding-bottom: 1.5rem !important;
     max-width: 1120px;
 }
 
@@ -102,21 +103,41 @@ h1, h2, h3, h4 {
 
 /* ---------- Header ---------- */
 
-/* The source banner is 960x269, roughly 3.5:1, which stretched to the page's own ~960px
-   content column at its own aspect ratio would render about 270px tall - most of the fixed
-   header's height this page's shell (further down) leaves for the conversation window under
-   it. object-fit: cover keeps it spanning the full column width, the way a banner reads as
-   one, while capping the height that costs, cropping the excess evenly off the top and
-   bottom rather than shrinking the whole image down (which would also shrink the text in
-   it). 190px keeps the logo mark and the "POWERING TRANSFORMATION" line both inside the
-   crop; anything shorter starts eating into one of them, since both sit close to the image's
-   own vertical center already. */
-[data-testid="stImage"] img {
-    height: 190px;
+/* The banner on the setup screens: the whole picture at its own aspect ratio, nothing
+   cropped, scrolling away with the page like everything else. It is an <img> app.py writes
+   from static/, not st.image, so any process serves it the same. */
+.banner {
+    display: block;
+    width: 100%;
+    height: auto;
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-    object-fit: cover;
-    object-position: 50% 50%;
+    margin: 0.25rem 0 0.4rem 0;
+}
+
+/* The chat page's one-line header: what is connected, without taking room from the chat. */
+.chat-header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+    padding-bottom: 0.7rem;
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.chat-brand {
+    font-weight: 800;
+    font-size: 1.15rem;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+}
+
+.chat-brand span { color: var(--brand); }
+
+.chat-meta {
+    color: var(--muted);
+    font-size: 0.85rem;
 }
 
 .page-title {
@@ -141,42 +162,6 @@ h1, h2, h3, h4 {
     border-radius: 3px;
     margin-bottom: 1.6rem;
 }
-
-/* ---------- Tabs ---------- */
-
-[data-baseweb="tab-list"] {
-    gap: 0.35rem;
-    background: transparent;
-    border-bottom: 1px solid var(--line);
-    margin-bottom: 0.4rem;
-}
-
-[data-baseweb="tab"] {
-    background: transparent !important;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    padding: 0.55rem 1.05rem !important;
-    color: var(--muted) !important;
-    font-weight: 500 !important;
-    font-size: 0.9rem !important;
-    transition: all var(--ease);
-}
-
-[data-baseweb="tab"]:hover {
-    background: var(--brand-wash) !important;
-    color: var(--brand) !important;
-}
-
-[data-baseweb="tab"][aria-selected="true"] {
-    color: var(--brand) !important;
-    font-weight: 600 !important;
-}
-
-[data-baseweb="tab-highlight"] {
-    background: var(--brand) !important;
-    height: 2px;
-}
-
-[data-baseweb="tab-border"] { display: none; }
 
 /* ---------- Pipeline diagram ---------- */
 
@@ -538,213 +523,6 @@ h1, h2, h3, h4 {
     transform: scale(1.06);
 }
 
-/* st.chat_input only docks itself to the page's own fixed bottom bar when it is called at
-   the top level of the script. Called from inside a tab, as it is here, Streamlit renders it
-   as an ordinary element in that tab's own flow instead. position: sticky was tried first
-   and rejected: sticky only glues to the viewport edge once the page has already been
-   scrolled far enough that its normal-flow spot would otherwise leave the viewport, so while
-   an answer is still being generated and the page is short, it sat wherever it fell in the
-   flow instead, above the pipeline and the "thinking" indicator. position: fixed is anchored
-   every render regardless of page length, which is what "always at the bottom" needs.
-
-   A plain position: fixed measures itself against the browser viewport, which would run the
-   bar under the sidebar too. will-change: transform on stMain (below, in the app shell block)
-   turns it into the containing block for its fixed-position descendants instead (a standard
-   CSS escape hatch), so the bar is fixed to the bottom of the main content column, already
-   offset past the sidebar by Streamlit's own flex layout, rather than the whole window. */
-[data-testid="stElementContainer"]:has([data-testid="stChatInput"]) {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    /* stMain is full width once the sidebar is subtracted, but the page's real content sits
-       in a narrower, centered column capped by .block-container's own max-width, itself
-       padded 80px on each side (stMainBlockContainer's own computed padding, measured
-       directly rather than assumed): a bubble or the banner actually renders in the
-       remaining 960px, not the full 1120. Matching max-width and centering here, plus
-       reproducing that same 80px inset as padding on this box instead of margin on the
-       input inside it, is what lines this bar's edges up with the messages above it exactly,
-       rather than framing them 80px wider on each side. */
-    max-width: 1120px;
-    margin: 0 auto;
-    z-index: 999;
-    background: linear-gradient(to top, var(--page) 75%, rgba(250, 250, 250, 0));
-    padding: 1.4rem 80px 1rem;
-    box-sizing: border-box;
-}
-
-/* ---------- App shell: fixed header/tabs/input, one scrolling conversation window ----------
-   A plain position: fixed input works only while the page is scrolled to its own bottom;
-   scrolled anywhere else, ordinary page content still passes underneath it, which is what
-   the fixed-only version did. What was actually wanted is a real app shell, the way most
-   modern chat apps are built: a header that never moves, a footer that never moves, and
-   exactly one scrolling region between them, bounded to the space those two leave.
-
-   This is built by chasing a real height down from the browser viewport through every
-   ancestor between it and the conversation panel (app.py's st.container(height="stretch",
-   key="conversation_window")), turning each one into a flex column that hands its remaining
-   space to the next, with overflow hidden so nothing along the way can scroll except the one
-   container built to. min-height: 0 undoes flexbox's default of never shrinking a child
-   below its content size, which is what would otherwise let every level of this chain grow
-   to fit the whole conversation instead of clipping it the way a bounded height requires.
-
-   stTabPanel and the vertical block Streamlit gives each tab's own content are generic to
-   every tab, not just Chat, so this scrolls the Schema tab the same way:
-   each tab's own content fills the space below the tab bar and scrolls independently, rather
-   than one page-length scrollbar for whichever tab happens to be open. */
-html, body {
-    height: 100%;
-    overflow: hidden;
-}
-
-[data-testid="stAppViewContainer"] {
-    height: 100vh;
-    overflow: hidden;
-}
-
-[data-testid="stSidebar"] {
-    height: 100vh;
-    overflow-y: auto;
-}
-
-[data-testid="stMain"] {
-    will-change: transform;
-    height: 100vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-[data-testid="stMainBlockContainer"] {
-    height: 100%;
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-/* stMainBlockContainer's only child is the one implicit block every top-level element in
-   the script (the header row, st.tabs itself) renders into. flex: 1 1 auto alone still lets
-   a flex item grow to its content's full natural size before shrinking, because min-height
-   defaults to auto rather than 0 - the single most common reason a flex chain like this one
-   stops actually bounding anything partway down. This is that fix, on the one level it was
-   still missing from. */
-[data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {
-    min-height: 0;
-    overflow: hidden;
-}
-
-[data-testid="stTabs"] {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-/* stTabs' own direct child wraps both the tab bar and every panel, active or not, all
-   of them, all the time: Streamlit runs every tab's code and keeps every panel's markup in
-   the DOM on every rerun, whichever tab is on screen. This div has no data-testid of its
-   own, but it is stTabs' only child, which is enough to reach it precisely. Giving it a real
-   height here, rather than leaving it sized to content, is what stTabPanel below actually
-   stretches against. */
-[data-testid="stTabs"] > div {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-/* The tab bar itself: this wrapper's first child, ahead of the stTabPanel siblings.
-   flex-shrink defaults to 1, same as everything else in this chain, so under enough vertical
-   pressure - a tall answer, a nested expander opened inside another one - the browser was
-   shrinking the tab row right along with them instead of leaving it alone, down to a sliver
-   of its real height rather than disappearing outright, which is what actually happened.
-   Nothing about a navigation bar should ever compress to make room for content; it is either
-   its own natural height or nothing, so flex-shrink: 0 takes it out of that competition
-   entirely regardless of how tight the space above the fixed input bar gets. */
-[data-testid="stTabs"] > div > :first-child {
-    flex-shrink: 0;
-}
-
-/* Streamlit marks every panel that is not on screen inert="true", and
-   hides them with a same-specificity class rule of its own. Scoping every rule below to the
-   one panel that is NOT inert is what keeps this from fighting that rule and forcing all
-   tabs' content to lay out stacked on top of each other at once, which is what
-   targeting [data-testid="stTabPanel"] unconditionally did the first time this was written. */
-[data-testid="stTabPanel"]:not([inert]) {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-[data-testid="stTabPanel"]:not([inert]) > [data-testid="stVerticalBlock"] {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-}
-
-/* Streamlit wraps every container that takes an explicit width or height - the keyed one
-   below, but also, it turns out, each st.expander - in a layout div of its own to measure it
-   against. min-height defaults to auto on it same as everywhere else in this chain, and
-   since its own overflow is visible rather than auto (only the keyed window's child, below,
-   scrolls), the flexbox spec's automatic-zero-minimum rule for scrolling items does not
-   reach it - the gap this chain was still missing when the tab bar turned out to still be
-   shrinkable under enough pressure. This first tried [data-testid="stLayoutWrapper"] alone
-   and broke something worse: that selector also matches the wrapper around every expander in
-   the conversation, whose own overflow: hidden (further down this file) turns "allowed to
-   shrink below its content" into "silently clips its content with no way to scroll to the
-   rest," which is what actually happened opening "How this answer was produced" - a 697px
-   expander compressed to 201px with the remaining ~500px simply gone. :has() scopes this to
-   the one instance that actually needs it, the window's own wrapper, and leaves every other
-   stLayoutWrapper - including each expander's - at the browser default, which is exactly
-   what stops an expander from ever being asked to shrink below its own content in the first
-   place. */
-[data-testid="stTabPanel"]:not([inert]) [data-testid="stLayoutWrapper"]:has(.st-key-conversation_window) {
-    min-height: 0;
-}
-
-/* The conversation window itself: app.py's keyed container, identified by the class
-   Streamlit generates from key="conversation_window" rather than a structural selector,
-   since it is the one specific box this whole chain exists to bound and scroll.
-   height="stretch" in app.py is what makes Streamlit hand it flex: 1 1 auto already measured
-   against a real, bounded height (everything above this rule is what makes that height real
-   rather than unbounded); it does not on its own add overflow, so this is what actually
-   turns that bounded box into the one thing that scrolls. */
-.st-key-conversation_window {
-    overflow-y: auto;
-    min-height: 0;
-    /* No padding-bottom reservation for the fixed input bar: that was tried twice, on the
-       unscrolled wrapper around this window and then here, and both were wrong for the same
-       reason - padding on a flex container is unconditional inset space, not something that
-       only appears once scrolled to it, so with justify-content: flex-end above it just
-       pushed content up and sat there empty all the time instead, which is the exact gap
-       this was meant to prevent. It turns out nothing here was ever needed: this window is
-       already bounded to end exactly where the fixed bar begins (the whole app-shell block
-       above this one is what makes that height real), so content flush against this box's
-       own bottom edge is already flush against the top of the bar, scrolled or not, with
-       nothing left for padding to reserve room against. */
-    padding-bottom: 1rem;
-}
-
-/* Bottom-anchoring a short conversation (leftover space collects above the first message
-   instead of below the last one) was tried two ways: justify-content: flex-end on this
-   container, then margin-top: auto on its first child. Both hit the same real Chromium bug -
-   a scrolling flex container whose content is end-aligned, by either method, can stop
-   growing its scrollable range on an incremental DOM change even though a full page load
-   happens to measure it correctly at first. Confirmed directly with margin-top: auto: right
-   after a fresh load it reported the full 2137px of real conversation, but toggling a
-   nested expander added a further ~600px of content that scrollHeight never picked up,
-   permanently past reach. Every user-facing report so far has been about scrolling itself,
-   not about the gap a short conversation leaves above the input, so this stays plain
-   top-down flex flow - the one arrangement this bug provably does not reach - and the gap is
-   left as a known, minor, separate cosmetic issue rather than trading correctness for it. */
-
 [data-testid="stTextInput"] input {
     border-radius: var(--radius-sm);
     border-color: var(--line);
@@ -958,6 +736,14 @@ html, body {
 
 @media (max-width: 640px) {
     .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+    /* On a phone the sidebar starts collapsed, so the button that opens it is always in the
+       top bar. An opaque bar, and content starting below it, keep that button from sitting
+       on top of the first line of text as the page scrolls under it. */
+    header[data-testid="stHeader"] { background: var(--page); }
+    .block-container { padding-top: 4rem !important; }
+    /* The five-step diagram on an empty chat does not fit a phone's width, and it pushed the
+       welcome taller than the screen. The progress shown while answering is unaffected. */
+    .hero-pipeline { display: none; }
     /* Targets the classes the bubbles actually carry. An earlier version of this rule named
        keyed-container classes from before the bubbles became plain divs this file writes
        directly, and matched nothing at all afterwards: phones kept the desktop 76%/88% width
