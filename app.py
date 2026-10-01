@@ -178,6 +178,15 @@ def _on_provider_change():
 
 def render_setup():
     _banner()
+    # The whole form is one element of the page, so the indexing page that follows replaces
+    # it in one piece. Element by element, everything below that page's last element would
+    # stay on screen, faded, until indexing finished: Streamlit only clears what a run did
+    # not redraw once the run ends, and the indexing run lasts as long as indexing does.
+    with st.container():
+        _setup_form()
+
+
+def _setup_form():
     st.markdown('<div class="page-title">Chat with your database</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="page-subtitle">Connect a PostgreSQL or MySQL database and an '
@@ -292,7 +301,9 @@ def render_setup():
             connection.check_llm(llm_settings)
             st.write("The model answers and calls tools.")
         except connection.ConnectionSetupError as exc:
-            status.update(label="Could not connect", state="error")
+            # expanded=True explicitly: left out, the update clears it and the box collapses,
+            # hiding the one line that says what to change.
+            status.update(label="Could not connect", state="error", expanded=True)
             st.error(str(exc))
             return
         status.update(label="Connected", state="complete")
