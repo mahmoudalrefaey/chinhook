@@ -187,7 +187,7 @@ The first run downloads the embedding model (about 70 MB).
 
 ### Deploying
 
-See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**: the app and Qdrant on Railway step by step, how to move Qdrant to Qdrant Cloud or any other host by changing two variables, and a checklist for a public deployment.
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**: the app and Qdrant on Railway step by step, how to move Qdrant to Qdrant Cloud or any other host by changing two variables, and a checklist for a public deployment. The app needs an always-on container host; on Vercel and other function platforms the live connection is cut every few minutes and sessions are lost (details in the same guide, along with how to keep a Vercel address as a redirect).
 
 ---
 
@@ -243,9 +243,11 @@ chinhook/
 │   ├── pii.py              # Columns treated as contact details
 │   └── sql.py              # SQL validation and read-only execution
 ├── ui/render.py            # Markdown rendering and sanitising
-├── assets/                 # Styles, icon, banners
+├── assets/                 # Styles and icon
+├── static/                 # The banner (setup screen and README), served as a plain file
 ├── docker/postgres-initdb/ # The sample Chinook database and its read-only login
 ├── docs/DEPLOYMENT.md
+├── deploy/vercel/          # Optional: a Vercel address that redirects to the app
 ├── Dockerfile
 ├── docker-compose.yml
 ├── docker-compose.local-db.yml

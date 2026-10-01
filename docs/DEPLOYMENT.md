@@ -11,8 +11,9 @@ Nothing else is needed on the server side. Visitors bring their own database and
 model API key on the setup screen, and neither is ever stored.
 
 The app is a long-running Python server that keeps a WebSocket open to every browser, so it
-needs a host that runs containers: Railway, Render, Fly.io, a VM, anything with Docker.
-Serverless and static platforms (Vercel, Netlify, Cloudflare Pages) cannot run it.
+needs a host that runs it as one always-on container: Railway, Render, Fly.io, a VM, anything
+with Docker. See [why not Vercel](#why-not-vercel-or-other-function-platforms) for what goes
+wrong on a platform that runs it as a function instead.
 
 ## On Railway
 
@@ -83,6 +84,38 @@ Anywhere that runs the `Dockerfile` works the same way: set the variables above,
 port the platform gives in `$PORT` (8501 if it gives none), and point the platform's health
 check at `/_stcore/health`. On Render, use a Web Service from the repository; on Fly.io,
 `fly launch` picks up the `Dockerfile`.
+
+## Why not Vercel or other function platforms
+
+Vercel can run this `Dockerfile` as a container function, and it was tried. Its own logs show
+why it does not work for this app:
+
+- **The live connection is cut every 5 minutes.** A function invocation ends at the plan's
+  time limit, and the browser's WebSocket ends with it (300 seconds on Hobby). Each cut
+  freezes the tab while it reconnects.
+- **One browser's requests reach several copies of the app.** A single page load started two
+  copies on different machines. Streamlit keeps each visitor's session, including their
+  database and model settings and their chat, in the memory of one process. A reconnect that
+  reaches another copy starts over at the setup screen, and an image drawn by one copy
+  returns 404 from another.
+
+Any platform that runs each request as a function behaves the same way. An always-on
+container keeps one process for every session; dropped connections come back to the same
+session for five minutes (`server.disconnectedSessionTTL` in `.streamlit/config.toml`).
+
+## Keeping a Vercel address
+
+To keep an existing `*.vercel.app` address (or a domain already on Vercel) pointing at the
+app, deploy only the redirect in [`deploy/vercel/`](../deploy/vercel/):
+
+1. In `deploy/vercel/vercel.json` and `deploy/vercel/index.html`, replace
+   `YOUR-APP.up.railway.app` with the app's own address.
+2. In the Vercel project: **Settings → Build and Deployment → Root Directory** =
+   `deploy/vercel`, Framework Preset **Other**, no build command. Without this, Vercel
+   detects `app.py` at the repository root and fails trying to build it as a Python function.
+3. Redeploy. `curl -I https://<your-project>.vercel.app` should answer `307` with a
+   `location` header pointing at the app. Environment variables on the Vercel project are no
+   longer used and can be removed.
 
 ## Operator checklist
 
