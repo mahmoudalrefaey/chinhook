@@ -106,13 +106,16 @@ session for five minutes (`server.disconnectedSessionTTL` in `.streamlit/config.
 ## Keeping a Vercel address
 
 To keep an existing `*.vercel.app` address (or a domain already on Vercel) pointing at the
-app, deploy only the redirect in [`deploy/vercel/`](../deploy/vercel/):
+app, the repository's root [`vercel.json`](../vercel.json) already does it. It sets the
+framework to "Other" with no install or build step, which overrides whatever preset the Vercel
+project has (such as "Python"), serves the small fallback page in `deploy/vercel/`, and
+redirects every path to the app. Without the override, Vercel finds `app.py` and fails trying
+to build it as a Python function ("Found app.py but it does not export a top-level app...");
+renaming `app.py` does not help, it only changes the error to "No python entrypoint found".
 
-1. In `deploy/vercel/vercel.json` and `deploy/vercel/index.html`, replace
-   `YOUR-APP.up.railway.app` with the app's own address.
-2. In the Vercel project: **Settings → Build and Deployment → Root Directory** =
-   `deploy/vercel`, Framework Preset **Other**, no build command. Without this, Vercel
-   detects `app.py` at the repository root and fails trying to build it as a Python function.
+1. In `vercel.json` and `deploy/vercel/index.html`, replace `YOUR-APP.up.railway.app` with
+   the app's own address.
+2. Leave the Vercel project's Root Directory at the repository root, so it reads that file.
 3. Redeploy. `curl -I https://<your-project>.vercel.app` should answer `307` with a
    `location` header pointing at the app. Environment variables on the Vercel project are no
    longer used and can be removed.
