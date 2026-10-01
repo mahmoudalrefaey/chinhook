@@ -113,8 +113,10 @@ redirects every path to the app. Without the override, Vercel finds `app.py` and
 to build it as a Python function ("Found app.py but it does not export a top-level app...");
 renaming `app.py` does not help, it only changes the error to "No python entrypoint found".
 
-1. In `vercel.json` and `deploy/vercel/index.html`, replace `YOUR-APP.up.railway.app` with
-   the app's own address.
+1. In `vercel.json` (both redirect rules) and `deploy/vercel/index.html`, replace
+   `YOUR-APP.up.railway.app` with the app's own address. There are two rules because Vercel
+   compiles `/:path*` into a pattern that needs at least one path segment: without the
+   separate `/` rule, the bare address would show the fallback page instead of redirecting.
 2. Leave the Vercel project's Root Directory at the repository root, so it reads that file.
 3. Redeploy. `curl -I https://<your-project>.vercel.app` should answer `307` with a
    `location` header pointing at the app. Environment variables on the Vercel project are no

@@ -6,6 +6,11 @@
   "outputDirectory": "deploy/vercel",
   "redirects": [
     {
+      "source": "/",
+      "destination": "https://YOUR-APP.up.railway.app/",
+      "permanent": false
+    },
+    {
       "source": "/:path*",
       "destination": "https://YOUR-APP.up.railway.app/:path*",
       "permanent": false
