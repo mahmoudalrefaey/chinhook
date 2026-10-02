@@ -60,6 +60,7 @@ that shows exactly how it was produced.
 - [Troubleshooting](#troubleshooting)
 - [Limitations](#limitations)
 - [Contributing](#contributing)
+- [Team](#team)
 - [License and credits](#license-and-credits)
 
 ---
@@ -640,11 +641,26 @@ Issues and pull requests are welcome, and contributions are accepted under the s
 
 ---
 
+## Team
+
+<table>
+<tr>
+<td align="center" width="25%"><b>Mahmoud Muhammad Refaey</b><br><a href="https://github.com/mahmoudalrefaey">@mahmoudalrefaey</a></td>
+<td align="center" width="25%"><b>Mohamed Taha</b><br><a href="https://github.com/mohamedtaha77">@mohamedtaha77</a></td>
+<td align="center" width="25%"><b>Mariam Adel</b></td>
+<td align="center" width="25%"><b>Roaa Elmarakby</b></td>
+</tr>
+</table>
+
+Supported & sponsored by **GBG Global Brands Group**.
+
+---
+
 ## License and credits
 
-Released under the [Apache License 2.0](LICENSE). © 2026 Mahmoud Refaey and the Chinhook contributors.
+Released under the [Apache License 2.0](LICENSE). © 2026 Mahmoud Muhammad Refaey and the Chinhook contributors.
 
-You may use, modify and redistribute the code, including commercially. Any copy or derivative must keep the copyright and the [NOTICE](NOTICE) file, which credits the original. The license covers the code, not the names: **"Chinhook", its icon and banner, and the GBG Global Brands Group name and logo are not licensed**. A fork or a service built on this code must use its own name and branding and must not present itself as Chinhook or as endorsed by its author or sponsor. Saying "based on Chinhook by Mahmoud Refaey" is welcome.
+You may use, modify and redistribute the code, including commercially. Any copy or derivative must keep the copyright and the [NOTICE](NOTICE) file, which credits the original. The license covers the code, not the names: **"Chinhook", its icon and banner, and the GBG Global Brands Group name and logo are not licensed**. A fork or a service built on this code must use its own name and branding and must not present itself as Chinhook or as endorsed by its team or sponsor. Saying "based on Chinhook" with a link back to this repository is welcome.
 
 Chinhook is built on [Streamlit](https://streamlit.io), [LangGraph](https://github.com/langchain-ai/langgraph), [Qdrant](https://qdrant.tech), [fastembed](https://github.com/qdrant/fastembed), [sqlglot](https://github.com/tobymao/sqlglot) and [SQLAlchemy](https://www.sqlalchemy.org). The screenshots use the [Chinook sample database](https://github.com/lerocha/chinook-database).
 
