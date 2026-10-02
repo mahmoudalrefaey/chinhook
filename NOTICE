@@ -1,0 +1,27 @@
+Chinhook
+Copyright 2026 Mahmoud Refaey and the Chinhook contributors
+
+Created by Mahmoud Refaey: https://github.com/mahmoudalrefaey/chinhook
+Supported & sponsored by GBG Global Brands Group.
+
+This product is licensed under the Apache License, Version 2.0 (the "License"); see the
+LICENSE file. Under section 4(d) of the License, anyone who redistributes this product or a
+work derived from it must include the attribution notices in this NOTICE file.
+
+
+Names and branding
+------------------
+
+The License covers the code, not the names. As section 6 of the License states, it grants no
+permission to use the trade names, trademarks, service marks or product names of the
+Licensor. In particular, none of the following is licensed under the License, and all rights
+in them are reserved:
+
+  - the name "Chinhook", and the Chinhook icon and banner (static/icon.svg, static/banner.png)
+  - the name, logo and branding of GBG Global Brands Group
+
+You may use, modify and redistribute the code under the License. A modified version, a fork,
+or a service built on it must use its own name and branding, must not present itself as
+Chinhook, and must not suggest that it is made, endorsed or sponsored by Mahmoud Refaey or
+GBG Global Brands Group. Stating where your work comes from, for example "based on Chinhook
+by Mahmoud Refaey", is permitted and welcome.

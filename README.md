@@ -33,7 +33,7 @@ that shows exactly how it was produced.
 <img alt="OpenAI-compatible" src="https://img.shields.io/badge/Models-OpenAI--compatible-412991?style=for-the-badge">
 <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white">
 <img alt="Railway" src="https://img.shields.io/badge/Runs%20on-Railway-0B0D0E?style=for-the-badge&logo=railway&logoColor=white">
-<a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-2EA44F?style=for-the-badge"></a>
+<a href="LICENSE"><img alt="Apache 2.0 License" src="https://img.shields.io/badge/License-Apache%202.0-2EA44F?style=for-the-badge"></a>
 
 </div>
 
@@ -494,7 +494,8 @@ Everything below belongs to whoever runs the deployment and is read from environ
 ├── vercel.json               # Makes a Vercel project a redirect to the app
 ├── Dockerfile                # The image Railway, or any Docker host, runs
 ├── pyproject.toml, uv.lock   # Dependencies, locked
-└── SECURITY.md, LICENSE
+├── LICENSE, NOTICE           # Apache 2.0, plus the credit and naming terms every copy keeps
+└── SECURITY.md               # How to report a vulnerability
 ```
 
 ---
@@ -635,13 +636,15 @@ You've reached a rate limit. Wait the number of seconds shown and try again. Ope
 
 ## Contributing
 
-Issues and pull requests are welcome. This branch is the **deployment** branch: it holds exactly what runs in production and nothing for local tooling, so keep changes here deployable as they are. Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome, and contributions are accepted under the same Apache 2.0 license. This branch is the **deployment** branch: it holds exactly what runs in production and nothing for local tooling, so keep changes here deployable as they are. Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ---
 
 ## License and credits
 
-Released under the [MIT License](LICENSE). © 2026 Mahmoud Refaey and the Chinhook contributors.
+Released under the [Apache License 2.0](LICENSE). © 2026 Mahmoud Refaey and the Chinhook contributors.
+
+You may use, modify and redistribute the code, including commercially. Any copy or derivative must keep the copyright and the [NOTICE](NOTICE) file, which credits the original. The license covers the code, not the names: **"Chinhook", its icon and banner, and the GBG Global Brands Group name and logo are not licensed**. A fork or a service built on this code must use its own name and branding and must not present itself as Chinhook or as endorsed by its author or sponsor. Saying "based on Chinhook by Mahmoud Refaey" is welcome.
 
 Chinhook is built on [Streamlit](https://streamlit.io), [LangGraph](https://github.com/langchain-ai/langgraph), [Qdrant](https://qdrant.tech), [fastembed](https://github.com/qdrant/fastembed), [sqlglot](https://github.com/tobymao/sqlglot) and [SQLAlchemy](https://www.sqlalchemy.org). The screenshots use the [Chinook sample database](https://github.com/lerocha/chinook-database).
 
