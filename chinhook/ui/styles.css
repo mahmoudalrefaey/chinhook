@@ -542,6 +542,12 @@ h1, h2, h3, h4 {
     box-shadow: 0 0 0 3px rgba(177, 24, 19, 0.13);
 }
 
+/* Edge draws its own show-password button inside a password field, next to Streamlit's. */
+[data-testid="stTextInput"] input::-ms-reveal,
+[data-testid="stTextInput"] input::-ms-clear {
+    display: none;
+}
+
 /* ---------- Sidebar ---------- */
 
 [data-testid="stSidebar"] {
@@ -676,6 +682,17 @@ h1, h2, h3, h4 {
 
 [data-testid="stExpander"] details[open] summary {
     border-bottom: 1px solid var(--line);
+}
+
+/* Streamlit draws a text field white with a white edge: it shows against the grey page, but
+   vanishes inside an expander, which is white too. There it gets the page's grey and a line. */
+[data-testid="stExpander"] [data-testid="stTextInputRootElement"] {
+    background: var(--page);
+    border-color: var(--line);
+}
+
+[data-testid="stExpander"] [data-testid="stTextInputRootElement"]:focus-within {
+    border-color: var(--brand);
 }
 
 .panel-label {

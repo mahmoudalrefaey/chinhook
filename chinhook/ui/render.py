@@ -15,6 +15,8 @@ rather than handing the Markdown to Streamlit: see the note in app.py about why 
 has to be a div the page writes.
 """
 
+import re
+
 import markdown as markdown_lib
 import nh3
 import pandas as pd
@@ -85,6 +87,21 @@ def escape_text(text) -> str:
     rather than encoding it, which is exactly what escaping plain text needs.
     """
     return nh3.clean(str(text if text is not None else ""), tags=set())
+
+
+# Everything Markdown, or Streamlit's own additions to it ($ for maths, :name: for icons and
+# :colour[...] for colours), could read as syntax.
+_MARKDOWN_PUNCTUATION = re.compile(r"([\\`*_{}\[\]()<>#+\-.!|~$:])")
+
+
+def escape_markdown(text) -> str:
+    """Plain text made safe to hand to st.write, st.error and the like, which render Markdown.
+
+    Each character Markdown could read as syntax gets a backslash, so a value from a
+    connection, such as a database name written as ![x](https://...), is shown as written
+    instead of becoming an image the browser goes off to fetch.
+    """
+    return _MARKDOWN_PUNCTUATION.sub(r"\\\1", str(text if text is not None else ""))
 
 
 def _dedupe_columns(columns: list[str]) -> list[str]:

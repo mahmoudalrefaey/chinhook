@@ -290,6 +290,7 @@ name = "chinhook"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastembed" },
     { name = "langgraph" },
     { name = "markdown" },
@@ -306,6 +307,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=44" },
     { name = "fastembed", specifier = ">=0.7" },
     { name = "langgraph", specifier = ">=1.2.12" },
     { name = "markdown", specifier = ">=3.5" },
