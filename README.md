@@ -13,8 +13,6 @@ that shows exactly how it was produced.
 <p>
 <a href="https://chinhook.vercel.app"><strong>Open the live app</strong></a>
 &nbsp;·&nbsp;
-<a href="#deploy-your-own">Deploy your own</a>
-&nbsp;·&nbsp;
 <a href="#how-it-works">How it works</a>
 &nbsp;·&nbsp;
 <a href="#troubleshooting">Troubleshooting</a>
@@ -53,8 +51,6 @@ that shows exactly how it was produced.
 - [What happens to your data](#what-happens-to-your-data)
 - [How it works](#how-it-works)
 - [Supported databases and models](#supported-databases-and-models)
-- [Deploy your own](#deploy-your-own)
-- [Configuration](#configuration)
 - [Project structure](#project-structure)
 - [Security and reliability](#security-and-reliability)
 - [Troubleshooting](#troubleshooting)
@@ -71,13 +67,13 @@ that shows exactly how it was produced.
 <tr>
 <td width="50%" valign="top">
 
-### 🔌 Bring your own database and model
+### Bring your own database and model
 Connect PostgreSQL or MySQL and any OpenAI-compatible endpoint on the setup screen. Nothing is configured in code, and nothing you enter is stored on the server. Export your setup to an encrypted file, and next time connect in one step.
 
 </td>
 <td width="50%" valign="top">
 
-### 🔒 Read-only, enforced by the database
+### Read-only, enforced by the database
 Every connection the app opens is a read-only session, so a write fails at the database itself, even with a login that could write.
 
 </td>
@@ -85,13 +81,13 @@ Every connection the app opens is a read-only session, so a write fails at the d
 <tr>
 <td valign="top">
 
-### 🧭 Built for real schemas
+### Built for real schemas
 The schema is searched, not pasted into a prompt: hybrid dense and lexical search over an index of your tables, expanded along foreign keys, plus an index of real values that turns "Americans" into `country = 'USA'`.
 
 </td>
 <td valign="top">
 
-### 🔍 Every answer shows its work
+### Every answer shows its work
 Each answer comes with the tables that were searched, the SQL that ran, the rows it returned, the time each step took and the tokens it cost.
 
 </td>
@@ -99,13 +95,13 @@ Each answer comes with the tables that were searched, the SQL that ran, the rows
 <tr>
 <td valign="top">
 
-### 🤔 Asks instead of guessing
+### Asks instead of guessing
 If a question could mean two things ("How many Americans?": customers or employees?), Chinhook asks once and offers the options to pick from.
 
 </td>
 <td valign="top">
 
-### ⚡ Compound questions, in parallel
+### Compound questions, in parallel
 A message holding several questions becomes several tasks. Each gets its own SQL, checks and retries, and they all run at the same time.
 
 </td>
@@ -113,13 +109,13 @@ A message holding several questions becomes several tasks. Each gets its own SQL
 <tr>
 <td valign="top">
 
-### ✅ Verified before it is reported
+### Verified before it is reported
 Results are checked against what was asked: a "top 5" returns at most five rows, and a count returns one number. A failed check is repaired with the reason fed back.
 
 </td>
 <td valign="top">
 
-### 🧹 Keeps only what it needs
+### Keeps only what it needs
 Credentials live in your browser session only. The index of your schema expires after 7 days without use, or is deleted the moment you ask.
 
 </td>
@@ -157,7 +153,7 @@ Credentials live in your browser session only. The index of your schema expires 
 <tr>
 <td width="62%" valign="middle">
 
-### 📱 Works on a phone, and survives a dropped connection
+### Works on a phone, and survives a dropped connection
 
 - The chat input stays pinned to the bottom of the screen, and each new answer scrolls into view as it streams in.
 - Chat and Schema are separate pages in the sidebar, so switching between them keeps your conversation.
@@ -176,7 +172,7 @@ Credentials live in your browser session only. The index of your schema expires 
 
 <img src="static/screenshots/setup.png" alt="The setup screen: database connection and model settings" width="440" align="right">
 
-1. **Open the app**: the [live instance](https://chinhook.vercel.app), or [your own deployment](#deploy-your-own).
+1. **Open the app** at [chinhook.vercel.app](https://chinhook.vercel.app).
 2. **Connect your database.** Pick PostgreSQL or MySQL, then paste the connection URL your provider gives you, or fill in the separate fields.
    - For PostgreSQL, choose the schema to answer from (`public` by default).
    - **SSL**: `prefer` encrypts when the server supports it, `require` always encrypts, and `disable` never does. An `sslmode` written in the URL itself takes precedence.
@@ -191,7 +187,7 @@ The sidebar shows what is connected and the state of the index. It also holds **
 
 <br clear="right">
 
-### 💾 Save your setup for next time
+### Save your setup for next time
 
 Instead of filling in the form on every visit, save the connection to a file once and load it on the next one.
 
@@ -223,7 +219,7 @@ Instead of filling in the form on every visit, save the connection to a file onc
 |---|---|---|
 | Your database URL, login and password, and your model API key | The server's memory, for your browser session only | Until you close the tab or change the connection. A dropped connection is held for five minutes so it can resume. Never written to disk, a database or the page URL |
 | Your database | Read by read-only queries only. Nothing is ever written to it | n/a |
-| The index: table and column names, a one-line description of each table, and common values of category-like columns (countries, statuses, genres) | The deployment's Qdrant | Deleted after `INDEX_RETENTION_DAYS` without use (7 by default), or immediately with **Delete this database's index** |
+| The index: table and column names, a one-line description of each table, and common values of category-like columns (countries, statuses, genres) | The deployment's Qdrant | Deleted after 7 days without use, or immediately with **Delete this database's index** |
 | Your questions, the relevant part of your schema and the rows a query returns, plus a few sample rows per table at index time | Your model provider, through the API key you gave | As long as that provider keeps them |
 | A configuration file you export | Your own computer, downloaded straight from your session. The server keeps no copy | Until you delete it. The password and API key are in it only encrypted under your passphrase, or not at all |
 
@@ -327,155 +323,6 @@ Endpoint quirks are handled automatically. These include reasoning models that r
 
 ---
 
-## Deploy your own
-
-A deployment is two services:
-
-| Service | What it is | Public? |
-|---|---|---|
-| **App** | This repository's `Dockerfile`: the Streamlit page, the agent, and the embedding model running in-process | Yes |
-| **Qdrant** | The vector index, `qdrant/qdrant` | **No**, and it never needs to be |
-
-Nothing else runs on the server side, because visitors bring their own database and model key.
-
-> [!IMPORTANT]
-> The app is a long-running Python server that keeps a WebSocket open to every browser, so it needs an **always-on container host**: Railway, Render, Fly.io, a VM, or anything else that runs Docker. Function or serverless platforms such as Vercel cut the connection every few minutes and lose sessions. See [Why not Vercel](#why-not-vercel-or-other-function-platforms).
-
-### On Railway (recommended)
-
-<details open>
-<summary><b>1. Create the Qdrant service</b></summary>
-
-<br>
-
-1. In a Railway project: **New → Docker Image** → `qdrant/qdrant:v1.19.1`.
-2. **Settings → Volumes**: add a volume mounted at `/qdrant/storage`, so indexes survive a redeploy.
-3. **Variables**:
-
-   ```dotenv
-   # Qdrant refuses every request without this key. Use a long random string,
-   # for example the output of: openssl rand -hex 32
-   QDRANT__SERVICE__API_KEY=<a-long-random-string>
-
-   # Listen on IPv6 as well as IPv4. Railway's private network is IPv6-only in some
-   # environments, and Qdrant listens on IPv4 alone by default.
-   QDRANT__SERVICE__HOST=::
-   ```
-
-4. **Do not** generate a public domain for it. The app reaches it over Railway's private network.
-
-</details>
-
-<details open>
-<summary><b>2. Create the app service</b></summary>
-
-<br>
-
-1. **New → GitHub Repo** → this repository (or your fork) and the branch to deploy. Railway finds the `Dockerfile` and builds it.
-2. **Variables**. Railway fills in the `${{…}}` references from the Qdrant service; replace `Qdrant` with your Qdrant service's exact name.
-
-   ```dotenv
-   QDRANT_URL=http://${{Qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333
-   QDRANT_API_KEY=${{Qdrant.QDRANT__SERVICE__API_KEY}}
-
-   # Optional: the defaults are shown
-   INDEX_RETENTION_DAYS=7
-   MAX_INDEX_TABLES=200
-   MAX_CONCURRENT_INDEX_JOBS=2
-   RATE_LIMIT_PER_SESSION_PER_MINUTE=10
-   RATE_LIMIT_GLOBAL_PER_MINUTE=120
-   # APP_PASSPHRASE=a shared passphrase in front of the whole app
-   ```
-
-3. **Settings → Networking → Generate Domain** (or attach your own domain).
-4. **Settings → Deploy → Healthcheck Path**: `/_stcore/health`.
-5. Give it **at least 1 GB of memory**. The embedding model, Streamlit and a couple of concurrent indexing jobs together use most of that.
-6. Keep it at **one replica**. Each browser's session lives in the memory of the process it connected to.
-
-Railway sets `PORT`, and the app listens on it.
-
-</details>
-
-<details open>
-<summary><b>3. Check it</b></summary>
-
-<br>
-
-Open the app's domain, connect a database and a model, and ask a question. The first time a database is connected, Qdrant's logs show the collections `chinhook_<16 hex>_tables` and `chinhook_<16 hex>_values` being created, next to `chinhook__registry`, which retention uses to track when each index was last used.
-
-</details>
-
-### Anywhere else that runs Docker
-
-The image is the same everywhere: set the variables above, let the platform route to `$PORT` (8501 when it sets none), and point its health check at `/_stcore/health`.
-
-```bash
-docker build -t chinhook .
-docker run -d --name chinhook -p 8501:8501 \
-  -e QDRANT_URL=https://<your-cluster>.cloud.qdrant.io:6333 \
-  -e QDRANT_API_KEY=<your-qdrant-key> \
-  chinhook
-```
-
-- **Render**: create a *Web Service* from the repository.
-- **Fly.io**: `fly launch` picks up the `Dockerfile`.
-- **Qdrant elsewhere**: the app only knows Qdrant as `QDRANT_URL` and `QDRANT_API_KEY`, so moving it to [Qdrant Cloud](https://cloud.qdrant.io) or another host changes only those two variables. Existing indexes don't need to move: a database whose index is missing is simply indexed again when it connects. For an `https://` URL without a port, port 443 is used.
-
-### Keeping a Vercel address
-
-The root [`vercel.json`](vercel.json) turns a Vercel project into a redirect to the app, which is how `chinhook.vercel.app` points at the Railway deployment.
-
-- It sets the framework to "Other" with no install or build step, which overrides whatever preset the Vercel project has.
-- It serves the small fallback page in [`deploy/vercel/`](deploy/vercel/index.html).
-- It redirects every path to the app.
-
-To point it at your own deployment:
-
-1. Replace the app address in both redirect rules of `vercel.json` and in `deploy/vercel/index.html`. There are two rules because `/:path*` does not match the bare `/`.
-2. Leave the Vercel project's **Root Directory** at the repository root, so Vercel reads that file.
-3. Redeploy. `curl -I https://<your-project>.vercel.app` should answer `307`, with a `location` header pointing at the app.
-
-### Why not Vercel or other function platforms
-
-Vercel can run this `Dockerfile` as a container function, and that was tried first. Its logs showed why it doesn't work for this app:
-
-- **The live connection is cut every 5 minutes.** A function invocation ends at the plan's time limit (300 seconds on Hobby), and the browser's WebSocket ends with it. Each cut freezes the tab while it reconnects.
-- **One browser's requests reach several copies of the app.** Streamlit keeps each visitor's session (their connection settings and their chat) in one process's memory. A reconnect that lands on another copy starts over at the setup screen.
-
-An always-on container keeps one process for every session, and a dropped connection comes back to the same session for five minutes (`server.disconnectedSessionTTL` in [`.streamlit/config.toml`](.streamlit/config.toml)).
-
-### Operator checklist
-
-- [ ] Qdrant has `QDRANT__SERVICE__API_KEY` set and **no public domain**.
-- [ ] The app's `QDRANT_API_KEY` matches it (a reference variable keeps them in sync).
-- [ ] The healthcheck path is `/_stcore/health`; the app has one replica and at least 1 GB of memory.
-- [ ] Rate limits and `MAX_INDEX_TABLES` suit how much load the server can take.
-- [ ] `INDEX_RETENTION_DAYS` matches what you tell visitors about how long their index is kept.
-- [ ] Any key that has ever been pasted somewhere public has been rotated.
-
----
-
-## Configuration
-
-Everything below belongs to whoever runs the deployment and is read from environment variables. Visitors' databases and models are never configured here.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `QDRANT_URL` | **required** | Where Qdrant is, e.g. `http://qdrant.railway.internal:6333`. Without it, the page shows a clear configuration error |
-| `QDRANT_API_KEY` | — | Qdrant's API key (its `QDRANT__SERVICE__API_KEY`). Set it whenever Qdrant is reachable over a network |
-| `QDRANT_COLLECTION_PREFIX` | `chinhook` | Prefix of every collection the app creates, so a shared Qdrant stays tidy and retention never touches anything else |
-| `EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | [fastembed](https://github.com/qdrant/fastembed) model for the index. Changing it is safe: indexes are rebuilt as databases reconnect |
-| `FASTEMBED_CACHE_PATH` | `/app/.cache/fastembed` (in the image) | Where the embedding model is cached. The image downloads the default model there at build time |
-| `INDEX_RETENTION_DAYS` | `7` | Days an unused index is kept. `0` keeps indexes forever |
-| `MAX_INDEX_TABLES` | `200` | Databases with more tables and views than this are refused rather than indexed |
-| `MAX_CONCURRENT_INDEX_JOBS` | `2` | How many databases may be indexing at once |
-| `APP_PASSPHRASE` | — | Optional shared passphrase in front of the whole app |
-| `RATE_LIMIT_PER_SESSION_PER_MINUTE` | `10` | Questions per browser session per minute |
-| `RATE_LIMIT_GLOBAL_PER_MINUTE` | `120` | Questions across all sessions per minute |
-| `PORT` | `8501` | The port to listen on. Railway and most platforms set it themselves |
-
----
-
 ## Project structure
 
 ```text
@@ -552,34 +399,13 @@ Everything below belongs to whoever runs the deployment and is read from environ
   - The database password and API key go into an exported file only encrypted: AES-256-GCM, with the key derived from your passphrase by scrypt.
   - scrypt's cost is fixed by the app rather than read from the file, and at most two run at once, so a crafted file can't make the server do more work.
   - Imports are limited to 1 MB and rate-limited per session. What a file holds goes through the same checks as the form, the public-host guard included.
-- **Optional gate.** `APP_PASSPHRASE` puts one shared passphrase in front of the whole app. It is compared in constant time.
+- **Optional gate.** A deployment can put one shared passphrase in front of the whole app. It is compared in constant time.
 
 Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 
 ---
 
 ## Troubleshooting
-
-<details>
-<summary><b>"Something is wrong with this deployment … <code>QDRANT_URL is not set</code>"</b></summary>
-
-<br>
-
-The app service has no `QDRANT_URL`. Set it on the **app** service (not on Qdrant), for example `http://${{Qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333` on Railway, then redeploy.
-
-</details>
-
-<details>
-<summary><b>"The search index (Qdrant) at … could not be reached" or <code>timed out</code></b></summary>
-
-<br>
-
-- Use the **private** address with the scheme and port: `http://<qdrant-service>.railway.internal:6333`. A bare `qdrant.railway.internal:6333` without `http://` is not a URL.
-- Add `QDRANT__SERVICE__HOST=::` to the **Qdrant** service and redeploy it. Some Railway private networks are IPv6-only, and Qdrant listens on IPv4 alone by default.
-- Make sure the app's `QDRANT_API_KEY` is the same value as Qdrant's `QDRANT__SERVICE__API_KEY`. A reference variable (`${{Qdrant.QDRANT__SERVICE__API_KEY}}`) keeps them in sync.
-- If you really must use Qdrant's *public* domain, use `https://<domain>` with **no port**. Railway's public domains serve on 443, not on 6333.
-
-</details>
 
 <details>
 <summary><b>"<i>host</i> is not a public address"</b></summary>
@@ -623,24 +449,6 @@ The model name doesn't exist at that endpoint. Use the provider's exact model ID
 </details>
 
 <details>
-<summary><b>The tab freezes, or goes back to the setup screen after a few minutes</b></summary>
-
-<br>
-
-The app is running on a function or serverless platform that cuts connections and spreads requests over several copies. Run it on an always-on container host instead; see [Why not Vercel](#why-not-vercel-or-other-function-platforms). A short drop of five minutes or less on an always-on host resumes the same session.
-
-</details>
-
-<details>
-<summary><b>Vercel: "Found app.py but it does not export a top-level app, application or handler"</b></summary>
-
-<br>
-
-Vercel is trying to build the app as a Python function. Keep the root [`vercel.json`](vercel.json): it overrides the project's framework preset and turns the deployment into a redirect. Renaming `app.py` does not help; it only changes the error to "No python entrypoint found".
-
-</details>
-
-<details>
 <summary><b>"That passphrase does not open this file"</b></summary>
 
 <br>
@@ -654,7 +462,7 @@ Either the passphrase is not the one the file was exported with (it is case-sens
 
 <br>
 
-You've reached a rate limit. Wait the number of seconds shown and try again. Operators can raise the limits with `RATE_LIMIT_PER_SESSION_PER_MINUTE` and `RATE_LIMIT_GLOBAL_PER_MINUTE`.
+You've reached a rate limit. Wait the number of seconds shown and try again.
 
 </details>
 
@@ -665,7 +473,7 @@ You've reached a rate limit. Wait the number of seconds shown and try again. Ope
 - Retrieval is only as good as the index. A table with an unhelpful name and no distinguishing sample data is harder to find.
 - Dependencies between the tasks of one message are limited: a filter can be shared from one task's question to another's, but tasks don't share actual query results.
 - Row counts on the Schema page come from the database's statistics and are approximate.
-- Sessions live in the memory of one app process. Run one replica; a restart or redeploy asks everyone to connect again, but indexes are kept.
+- Sessions live in the memory of one app process, so a restart or redeploy asks everyone to connect again. Indexes are kept.
 - Databases must be reachable from the internet. There is no SSH tunnel or private-network option for visitors' databases.
 - The optional login is one shared passphrase, not per-user accounts.
 
@@ -683,8 +491,8 @@ Issues and pull requests are welcome, and contributions are accepted under the s
 <tr>
 <td align="center" width="25%"><b>Mahmoud Muhammad Refaey</b><br><a href="https://github.com/mahmoudalrefaey">@mahmoudalrefaey</a></td>
 <td align="center" width="25%"><b>Mohamed Taha</b><br><a href="https://github.com/mohamedtaha77">@mohamedtaha77</a></td>
-<td align="center" width="25%"><b>Mariam Adel</b></td>
-<td align="center" width="25%"><b>Roaa Elmarakby</b></td>
+<td align="center" width="25%"><b>Mariam Adel</b><br><a href="https://github.com/Mariam-adel7">@Mariam-adel7</a></td>
+<td align="center" width="25%"><b>Roaa Elmarakby</b><br><a href="https://github.com/roaawal">@roaawal</a></td>
 </tr>
 </table>
 
