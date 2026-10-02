@@ -299,3 +299,15 @@ PROVIDERS = {
     "Azure OpenAI": "https://YOUR-RESOURCE.openai.azure.com/openai/v1",
     "Other (OpenAI-compatible)": "",
 }
+
+
+def provider_for(base_url: str) -> str:
+    """Which of PROVIDERS a base URL belongs to, so a saved one shows under the right name."""
+    base_url = (base_url or "").strip().rstrip("/")
+    for name, url in PROVIDERS.items():
+        if url and base_url == url:
+            return name
+    # Every Azure resource has its own host, so only the domain can say it is one.
+    if (urlsplit(base_url).hostname or "").lower().endswith(".openai.azure.com"):
+        return "Azure OpenAI"
+    return "Other (OpenAI-compatible)"

@@ -72,7 +72,7 @@ that shows exactly how it was produced.
 <td width="50%" valign="top">
 
 ### 🔌 Bring your own database and model
-Connect PostgreSQL or MySQL and any OpenAI-compatible endpoint on the setup screen. Nothing is configured in code, and nothing you enter is stored.
+Connect PostgreSQL or MySQL and any OpenAI-compatible endpoint on the setup screen. Nothing is configured in code, and nothing you enter is stored on the server. Export your setup to an encrypted file, and next time connect in one step.
 
 </td>
 <td width="50%" valign="top">
@@ -187,9 +187,30 @@ Credentials live in your browser session only. The index of your schema expires 
 5. **Wait for indexing, once.** The first time a database is connected, each table is read, your model describes it in one sentence, and the description is indexed. Reconnecting later reuses the index. **Refresh index** re-indexes only the tables that changed.
 6. **Ask.** Under every answer, **How this answer was produced** shows the pipeline, the tables, the SQL, the rows and the tasks the question became.
 
-The sidebar shows what is connected and the state of the index. It also holds **New chat**, **Change connection** and, under *Your data*, **Delete this database's index**, which removes everything the server holds about your database.
+The sidebar shows what is connected and the state of the index. It also holds **New chat**, **Export configuration**, **Change connection** and, under *Your data*, **Delete this database's index**, which removes everything the server holds about your database.
 
 <br clear="right">
+
+### 💾 Save your setup for next time
+
+Instead of filling in the form on every visit, save the connection to a file once and load it on the next one.
+
+<img src="static/screenshots/export.png" alt="The Export configuration dialog: a passphrase, Create file, and the download" width="360" align="right">
+
+- **Export.** Once connected, press **Export configuration** in the sidebar. Choose a passphrase of at least 10 characters to include the database password and API key, or turn that switch off to leave them out. Press **Create file**, then download `chinhook-<database>.json`.
+- **Import.** On the setup screen, open **Import a configuration file** and choose the file. Enter its passphrase (or, for a file without them, the database password and API key), then press **Load and connect**. **Load into the form** fills in the form instead, so you can check or change something before connecting.
+- **What is in the file.** The database URL, schema and SSL setting, and the provider, base URL, model and fast model. With a passphrase, all of it, password and key included, is encrypted with AES-256-GCM under a key derived from the passphrase with scrypt. A wrong passphrase, or a file changed after it was exported, does not load. Without a passphrase, the password and key are not in the file at all.
+- **Nothing is kept.** The file is made in memory for your download and read in memory when you import it. The server keeps no copy, and the passphrase fields are emptied as soon as they have been used.
+
+<br clear="right">
+
+<p align="center">
+  <img src="static/screenshots/import.png" alt="Import a configuration file on the setup screen: the chosen file, its passphrase, and Load and connect" width="100%">
+  <br><sub><b>Import</b> on the setup screen: choose the file, enter its passphrase, and connect.</sub>
+</p>
+
+> [!WARNING]
+> A passphrase can't be recovered. If you forget it, connect through the form again and export a new file.
 
 > [!TIP]
 > No database handy? Load the [Chinook sample database](https://github.com/lerocha/chinook-database) (a music store with artists, albums, tracks, customers and invoices) into a free hosted PostgreSQL or MySQL, then connect to it. The screenshots in this README use it.
@@ -204,6 +225,7 @@ The sidebar shows what is connected and the state of the index. It also holds **
 | Your database | Read by read-only queries only. Nothing is ever written to it | n/a |
 | The index: table and column names, a one-line description of each table, and common values of category-like columns (countries, statuses, genres) | The deployment's Qdrant | Deleted after `INDEX_RETENTION_DAYS` without use (7 by default), or immediately with **Delete this database's index** |
 | Your questions, the relevant part of your schema and the rows a query returns, plus a few sample rows per table at index time | Your model provider, through the API key you gave | As long as that provider keeps them |
+| A configuration file you export | Your own computer, downloaded straight from your session. The server keeps no copy | Until you delete it. The password and API key are in it only encrypted under your passphrase, or not at all |
 
 Columns that look like contact details (email, phone, address, names) are masked as `[redacted]` in the sample rows sent to the model, and they are never indexed as values.
 
@@ -462,6 +484,7 @@ Everything below belongs to whoever runs the deployment and is read from environ
 ├── chinhook/                 # Everything app.py calls
 │   ├── chat_engine.py        #   The one entry point the page uses: answer, index, schema
 │   ├── connection.py         #   Setup: reading what was typed, the public-host guard, checks
+│   ├── settings_file.py      #   Exporting and importing a connection, encrypted
 │   ├── runtime.py            #   The database and model one browser session is connected to
 │   ├── config.py             #   The deployment's own settings, from environment variables
 │   ├── rate_limit.py         #   Per-session and global limits
@@ -525,6 +548,10 @@ Everything below belongs to whoever runs the deployment and is read from environ
   - The check runs again whenever a new connection pool is opened, and the model client never follows redirects.
 - **Isolation between visitors.** Connection settings, chat history and schema caches are per session. Connection pools, model clients (keyed by a hash of the API key) and Qdrant collections are per database or per key. None of them are shared between visitors.
 - **Sanitised output.** Answers are Markdown rendered through an allowlist HTML sanitiser ([nh3](https://github.com/messense/nh3)), so neither a model's reply nor a value in your data can inject script into the page.
+- **Configuration files.**
+  - The database password and API key go into an exported file only encrypted: AES-256-GCM, with the key derived from your passphrase by scrypt.
+  - scrypt's cost is fixed by the app rather than read from the file, and at most two run at once, so a crafted file can't make the server do more work.
+  - Imports are limited to 1 MB and rate-limited per session. What a file holds goes through the same checks as the form, the public-host guard included.
 - **Optional gate.** `APP_PASSPHRASE` puts one shared passphrase in front of the whole app. It is compared in constant time.
 
 Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
@@ -610,6 +637,15 @@ The app is running on a function or serverless platform that cuts connections an
 <br>
 
 Vercel is trying to build the app as a Python function. Keep the root [`vercel.json`](vercel.json): it overrides the project's framework preset and turns the deployment into a redirect. Renaming `app.py` does not help; it only changes the error to "No python entrypoint found".
+
+</details>
+
+<details>
+<summary><b>"That passphrase does not open this file"</b></summary>
+
+<br>
+
+Either the passphrase is not the one the file was exported with (it is case-sensitive), or the file was changed after it was exported. A passphrase can't be recovered: connect through the form again, then export a new file from the sidebar.
 
 </details>
 

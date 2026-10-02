@@ -52,12 +52,15 @@ try:
     # the top of this file instead, well before this point, which meant any failure in that
     # whole chain had already happened and crashed the page with a raw traceback by the time
     # this except clause could have caught anything.
-    from chinhook.ui.render import as_frame, bubble, escape_text, pipeline_html, text_to_html, thinking
+    from chinhook.ui.render import (
+        as_frame, bubble, escape_markdown, escape_text, pipeline_html, text_to_html, thinking,
+    )
     from chinhook import chat_engine
     from chinhook import config
     from chinhook import connection
     from chinhook import rate_limit
     from chinhook import runtime
+    from chinhook import settings_file
     from chinhook.db.indexing import get_index_status
 except Exception as exc:  # noqa: BLE001
     # escape_text is one of the names this same try was attempting to import, so it cannot
@@ -123,6 +126,9 @@ for name, default in [("messages", []), ("pending", None), ("session", None), ("
                       # Each attempt to connect costs a real database login and a model call,
                       # so it is limited on its own, separately from questions.
                       ("setup_bucket", rate_limit.TokenBucket(5, 5)),
+                      # Opening a configuration file runs scrypt, slow and memory-hungry on
+                      # purpose, so trying passphrases is limited on its own too.
+                      ("import_bucket", rate_limit.TokenBucket(5, 5)),
                       ("runtime", None), ("index_ready", False)]:
     if name not in st.session_state:
         st.session_state[name] = default
@@ -196,6 +202,7 @@ def _setup_form():
         unsafe_allow_html=True,
     )
     st.markdown('<div class="rule"></div>', unsafe_allow_html=True)
+    _import_section()
 
     # ---- database
     st.markdown('<div class="panel-label">1 · Your database</div>', unsafe_allow_html=True)
@@ -227,8 +234,12 @@ def _setup_form():
     left, right = st.columns(2)
     schema = ""
     if dialect == runtime.POSTGRES:
+        # The default goes into session state rather than value=, so a loaded file can set
+        # this field without Streamlit warning that it was given two values.
+        if "setup_schema" not in st.session_state:
+            st.session_state.setup_schema = "public"
         schema = left.text_input(
-            "Schema", key="setup_schema", value="public",
+            "Schema", key="setup_schema",
             help="Questions are answered from the tables and views in this schema.",
         )
     ssl_mode = right.selectbox(
@@ -288,29 +299,181 @@ def _setup_form():
             )
         llm_settings = connection.llm_settings(base_url, api_key, model, fast_model)
     except connection.ConnectionSetupError as exc:
-        st.error(str(exc))
+        st.error(escape_markdown(exc))
         return
+    _check_and_connect(runtime.Runtime(db=db, llm=llm_settings))
 
-    candidate = runtime.Runtime(db=db, llm=llm_settings)
+
+def _check_and_connect(candidate: runtime.Runtime) -> None:
+    """Log in to the database and try the model for real, and connect when both work.
+
+    What is shown here comes from the connection details, which may have come from a file
+    someone else wrote, so it is escaped: a database name cannot turn into Markdown.
+    """
     with st.status("Checking the connection", expanded=True) as status:
         try:
-            st.write(f"Connecting to {db.describe()}…")
+            st.write(f"Connecting to {escape_markdown(candidate.db.describe())}…")
             count = connection.check_database(candidate)
             st.write(f"Connected: {count} tables and views to ask about.")
-            st.write(f"Checking {llm_settings.model}…")
-            connection.check_llm(llm_settings)
+            st.write(f"Checking {escape_markdown(candidate.llm.model)}…")
+            connection.check_llm(candidate.llm)
             st.write("The model answers and calls tools.")
         except connection.ConnectionSetupError as exc:
             # expanded=True explicitly: left out, the update clears it and the box collapses,
             # hiding the one line that says what to change.
             status.update(label="Could not connect", state="error", expanded=True)
-            st.error(str(exc))
+            st.error(escape_markdown(exc))
             return
         status.update(label="Connected", state="complete")
 
     _forget_connection()
     st.session_state.runtime = candidate
     st.rerun()
+
+
+# ---------- configuration files ----------
+# A visitor can save what they connected with to a file (the export dialog on the chat page)
+# and load it on the setup screen next time. The file goes straight from this server to their
+# browser and back; see chinhook/settings_file.py for what is in it and how it is encrypted.
+
+# Typed only to open one file, and cleared as soon as that attempt is over.
+_IMPORT_SECRETS = ("import_passphrase", "import_password", "import_api_key")
+
+
+def _import_section():
+    """A file exported earlier, as a way past filling in the whole form below."""
+    with st.expander("Import a configuration file", icon=":material/upload_file:"):
+        st.markdown(
+            '<div class="timing">Saved your settings from the chat page before? Load the file '
+            "here instead of filling in the form. It is read in this session only, and not "
+            "kept.</div>",
+            unsafe_allow_html=True,
+        )
+        uploaded = st.file_uploader(
+            "Configuration file", type=["json"], key="import_file", max_upload_size=1,
+            label_visibility="collapsed",
+        )
+        if uploaded is None:
+            return
+        try:
+            info = settings_file.inspect(uploaded.getvalue())
+        except settings_file.SettingsFileError as exc:
+            st.error(escape_markdown(exc))
+            return
+
+        # A form, not loose fields: a password field typed into and then left with Tab (past
+        # its own show-password button) never reaches the server on its own, and a form sends
+        # every field when it is submitted, however the focus moved between them. It also
+        # empties them again once it has (clear_on_submit), on the page as well as here.
+        with st.form("import_form", border=False, clear_on_submit=True):
+            if info.encrypted:
+                st.markdown(
+                    f'<div class="timing">This file says it is for {escape_text(info.label)}. '
+                    "Its password and API key are encrypted.</div>",
+                    unsafe_allow_html=True,
+                )
+                st.text_input(
+                    "Passphrase", type="password", key="import_passphrase",
+                    help="The passphrase chosen when this file was exported.",
+                )
+            else:
+                st.markdown(
+                    f'<div class="timing">For {escape_text(info.label)}. The file holds no '
+                    "password or API key, so enter them here.</div>",
+                    unsafe_allow_html=True,
+                )
+                left, right = st.columns(2)
+                left.text_input("Database password", type="password", key="import_password")
+                right.text_input("API key", type="password", key="import_api_key")
+
+            left, right = st.columns(2)
+            left.form_submit_button(
+                "Load and connect", type="primary", width="stretch",
+                on_click=_load_settings_file, args=(True,),
+            )
+            right.form_submit_button(
+                "Load into the form", width="stretch", on_click=_load_settings_file, args=(False,),
+            )
+        notice = st.session_state.pop("import_notice", None)
+        if notice is not None:
+            kind, message = notice
+            (st.error if kind == "error" else st.success)(escape_markdown(message))
+        loaded = st.session_state.pop("import_connect", None)
+        if loaded is not None:
+            _connect_loaded(loaded)
+
+
+def _load_settings_file(connect: bool) -> None:
+    """Read the uploaded file into the setup form and, with connect, connect with it too.
+
+    The import form's submit callback, so it runs before the next run draws anything and may
+    still set every setup_* key the setup form's fields read from. The passphrase, and any
+    password or key typed in for the file, are cleared here whatever happens, so none of them
+    outlives the attempt.
+    """
+    typed = {name: st.session_state.get(name, "") for name in _IMPORT_SECRETS}
+    for name in _IMPORT_SECRETS:
+        if name in st.session_state:
+            st.session_state[name] = ""
+    uploaded = st.session_state.get("import_file")
+    if uploaded is None:
+        return
+    allowed, wait = st.session_state.import_bucket.take()
+    if not allowed:
+        st.session_state.import_notice = (
+            "error", f"Too many attempts in a short time. Try again in about {wait:.0f} seconds."
+        )
+        return
+    try:
+        loaded = settings_file.load_settings(uploaded.getvalue(), typed["import_passphrase"])
+    except settings_file.SettingsFileError as exc:
+        st.session_state.import_notice = ("error", str(exc))
+        return
+    loaded = loaded.with_secrets(typed["import_password"], typed["import_api_key"])
+    _fill_setup_form(loaded)
+    if connect:
+        st.session_state.import_connect = loaded
+    else:
+        st.session_state.import_notice = (
+            "success", f"Loaded {loaded.describe()}. Check the form below, then press Connect.",
+        )
+
+
+def _fill_setup_form(loaded: settings_file.LoadedSettings) -> None:
+    """Put settings read from a file into the setup form, as if they had been typed in."""
+    st.session_state.setup_dialect = next(
+        name for name, value in _DIALECTS.items() if value == loaded.dialect
+    )
+    st.session_state.setup_mode = "Connection URL"
+    st.session_state.setup_url = loaded.url
+    if loaded.dialect == runtime.POSTGRES:
+        st.session_state.setup_schema = loaded.schema
+    st.session_state.setup_ssl = loaded.ssl_mode
+    st.session_state.setup_provider = loaded.provider
+    st.session_state.setup_base_url = loaded.base_url
+    st.session_state.setup_model = loaded.model
+    st.session_state.setup_fast_model = loaded.fast_model
+    if loaded.api_key:
+        st.session_state.setup_api_key = loaded.api_key
+
+
+def _connect_loaded(loaded: settings_file.LoadedSettings) -> None:
+    """Connect with settings loaded from a file, just as the form's Connect button would."""
+    allowed, wait = st.session_state.setup_bucket.take()
+    if not allowed:
+        st.error(f"Too many attempts in a short time. Try again in about {wait:.0f} seconds.")
+        return
+    try:
+        db = connection.database_settings_from_url(
+            loaded.url, schema=loaded.schema, ssl_mode=loaded.ssl_mode
+        )
+        llm_settings = connection.llm_settings(
+            loaded.base_url, loaded.api_key, loaded.model, loaded.fast_model
+        )
+    except connection.ConnectionSetupError as exc:
+        st.error(escape_markdown(exc))
+        return
+    _check_and_connect(runtime.Runtime(db=db, llm=llm_settings))
 
 
 def render_prepare():
@@ -603,6 +766,98 @@ def chat_session():
     return st.session_state.session
 
 
+# ---------- exporting the connection ----------
+
+_EXPORT_SECRETS = ("export_passphrase", "export_passphrase_again")
+
+
+def _forget_export_file():
+    """Drop a file made earlier, once what it was made from has changed."""
+    st.session_state.pop("export_file", None)
+
+
+def _create_export_file():
+    """Make the export dialog's file from what was chosen in it.
+
+    The export form's submit callback, for the same reason as _load_settings_file: it clears
+    the passphrase fields before they are drawn again, so the passphrase is gone once the file
+    is made.
+    """
+    include = st.session_state.get("export_secrets", True)
+    passphrase = st.session_state.get("export_passphrase", "")
+    repeated = st.session_state.get("export_passphrase_again", "")
+    for name in _EXPORT_SECRETS:
+        if name in st.session_state:
+            st.session_state[name] = ""
+    rt = st.session_state.runtime
+    try:
+        if include:
+            settings_file.check_new_passphrase(passphrase, repeated)
+            data = settings_file.export_settings(rt, passphrase)
+        else:
+            data = settings_file.export_settings(rt)
+    except settings_file.SettingsFileError as exc:
+        st.session_state.export_file = ("error", str(exc))
+        return
+    st.session_state.export_file = ("file", settings_file.file_name(rt), data)
+
+
+@st.dialog("Export configuration", icon=":material/download:")
+def _export_dialog():
+    """Save what this session is connected with, to import on the setup screen next time."""
+    rt = st.session_state.runtime
+    st.markdown(
+        f'<div class="timing">Save the connection to {escape_text(rt.db.describe())} and '
+        f"{escape_text(rt.llm.model)} to a file. Next time, import it on the setup screen "
+        "instead of filling in the form again.</div>",
+        unsafe_allow_html=True,
+    )
+    include = st.toggle(
+        "Include the database password and API key", value=True, key="export_secrets",
+        on_change=_forget_export_file,
+    )
+    # A form for the same reasons as the import section's: both passphrases reach the server
+    # when it is submitted, even when someone tabs from one field to the next, and both
+    # fields are empty again afterwards.
+    with st.form("export_form", border=False, clear_on_submit=True):
+        if include:
+            st.text_input(
+                "Passphrase", type="password", key="export_passphrase",
+                help=f"At least {settings_file.MIN_PASSPHRASE_LENGTH} characters. You need it to "
+                "import the file, and it cannot be recovered if it is forgotten.",
+            )
+            st.text_input("Repeat the passphrase", type="password", key="export_passphrase_again")
+            st.markdown(
+                '<div class="timing">The password and API key are encrypted with this '
+                "passphrase (scrypt and AES-256-GCM). Without it, the file is of no use to anyone "
+                "who finds it.</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div class="timing">The file says where the database and the model are, but '
+                "holds no password or API key: you enter those when you import it.</div>",
+                unsafe_allow_html=True,
+            )
+        st.form_submit_button("Create file", type="primary", on_click=_create_export_file)
+
+    result = st.session_state.get("export_file")
+    if result is None:
+        return
+    if result[0] == "error":
+        st.error(escape_markdown(result[1]))
+        return
+    _, name, data = result
+    st.download_button(
+        f"Download {name}", data=data, file_name=name, mime="application/json",
+        icon=":material/download:", on_click="ignore",
+    )
+    st.markdown(
+        '<div class="timing">Made for this download only: this server keeps no copy.</div>',
+        unsafe_allow_html=True,
+    )
+
+
 # ---------- sidebar ----------
 
 try:
@@ -673,6 +928,9 @@ with st.sidebar:
         st.session_state.session = None
         st.session_state.answered = {}
         st.rerun()
+    if st.button("Export configuration", help="Save this connection to a file, to import next time"):
+        _forget_export_file()
+        _export_dialog()
     if st.button("Change connection"):
         _forget_connection()
         st.rerun()

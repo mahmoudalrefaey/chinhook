@@ -19,3 +19,6 @@ enableStaticServing = true
 # for it to come back to, with its connection settings and chat intact. Streamlit's default is
 # two minutes.
 disconnectedSessionTTL = 300
+# The only upload is a configuration file of a few hundred bytes. Streamlit's own default is
+# 200 MB per file; this refuses anything over 1 MB before the app sees any of it.
+maxUploadSize = 1
