@@ -1,31 +1,27 @@
 [project]
 name = "chinhook"
 version = "0.1.0"
-description = "Add your description here"
+description = "Ask a PostgreSQL or MySQL database questions in plain language."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastembed>=0.7",
     "langgraph>=1.2.12",
     # Answers are written in Markdown and the interface renders it. Python-Markdown is
     # used rather than a hand-written converter so tables, lists and emphasis come out
     # the way they were written, and the Dockerfile's "uv sync --frozen" installs it.
     "markdown>=3.5",
-    "ollama>=0.6.2",
+    "nh3>=0.3.7",
     "openai>=3.16.2",
     "pandas>=3.0.6",
     "psycopg2-binary>=2.9.13",
-    "python-dotenv>=1.2.3",
+    "pymysql[rsa]>=1.2",
     "qdrant-client>=1.19.1",
-    "sqlalchemy>=2.0.54",
+    "sqlalchemy>=2.0",
     "sqlglot>=30.19.0",
     # app.py is the web interface and imports this, and the Dockerfile installs the
     # environment with "uv sync --frozen", so it has to be declared here or the deployed
     # interface has no Streamlit to run on.
     "streamlit>=1.40",
-]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.0.0",
 ]
 

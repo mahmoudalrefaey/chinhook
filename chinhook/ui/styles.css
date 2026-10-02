@@ -1,0 +1,764 @@
+/* Interface styling for the Chinhook database chat.
+   Palette sampled from banner.png so the page matches the brand mark exactly.
+   Everything here is plain CSS. No component libraries are involved. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --brand: #B11813;
+    --brand-deep: #9E100E;
+    --brand-hover: #C81E18;
+    --brand-wash: #FDF3F2;
+    --page: #FAFAFA;
+    --surface: #FFFFFF;
+    --surface-alt: #F7F7F6;
+    --ink: #1A1A1A;
+    --muted: #6B6B6B;
+    /* Was #9A9A9A, which measures 2.81:1 against the white surface behind it, below the
+       4.5:1 WCAG AA calls for at the sizes this is actually used at, on the pipeline
+       diagram every visitor sees before asking anything. Matches --muted below, which
+       already clears it with real margin (5.33:1). */
+    --faint: #6B6B6B;
+    --line: #E5E5E5;
+    --radius: 14px;
+    --radius-sm: 10px;
+    --shadow-sm: 0 1px 2px rgba(17, 17, 17, 0.06);
+    --shadow: 0 2px 10px rgba(17, 17, 17, 0.07);
+    --shadow-lift: 0 6px 18px rgba(177, 24, 19, 0.18);
+    --ease: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Remove the parts that identify the page as Streamlit. */
+/* header[data-testid="stHeader"] and its inner [data-testid="stToolbar"] are deliberately
+   NOT hidden here, even though visually empty once the pieces below are hidden. The button
+   that reopens a collapsed sidebar (stExpandSidebarButton) lives inside that same toolbar,
+   and display:none on an ancestor removes its whole subtree from layout with no way for
+   descendant CSS to undo it. Hiding the specific unwanted pieces individually keeps the
+   header's own box in the layout (invisible, since nothing inside it is visible) without
+   taking that control down with it. */
+#MainMenu,
+footer,
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+[data-testid="stAppDeployButton"],
+.stAppDeployButton {
+    display: none !important;
+}
+
+header[data-testid="stHeader"] {
+    background: transparent;
+}
+
+[data-testid="stToolbar"] {
+    background: transparent;
+}
+
+html, body, [data-testid="stAppViewContainer"], .stApp {
+    background: var(--page);
+    color: var(--ink);
+}
+
+/* Streamlit sets its own font on nearly every element it renders, at a specificity that
+   beats a plain body rule, so the font has to be forced.
+
+   It is aimed at the containers that hold real text rather than at every element. Icons
+   are ligatures drawn from a symbol font, and a blanket rule replaces that font and prints
+   the name of each icon as words instead. Targeting text containers leaves them alone. */
+html, body, .stApp,
+[data-testid="stMarkdownContainer"],
+[data-testid="stMarkdownContainer"] *,
+[data-testid="stHeadingContainer"],
+[data-testid="stHeadingContainer"] *,
+[data-baseweb="select"], [data-baseweb="select"] *,
+[data-baseweb="popover"] li,
+.stApp button, .stApp input, .stApp textarea, .stApp select,
+.stApp label, .stApp h1, .stApp h2, .stApp h3, .stApp h4,
+.stApp [data-testid="stDataFrame"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+code, pre, code *, pre *,
+[data-testid="stCode"], [data-testid="stCode"] * {
+    font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace !important;
+}
+
+/* The chat input sits in Streamlit's own bottom bar, which takes its own room in the page, so
+   the content only needs a little space under it rather than room for a bar laid over it. */
+.block-container {
+    padding-top: 1.2rem !important;
+    padding-bottom: 1.5rem !important;
+    max-width: 1120px;
+}
+
+h1, h2, h3, h4 {
+    color: var(--ink);
+    letter-spacing: -0.02em;
+    font-weight: 700;
+}
+
+@keyframes riseIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Header ---------- */
+
+/* The banner on the setup screens: the whole picture at its own aspect ratio, nothing
+   cropped, scrolling away with the page like everything else. It is an <img> app.py writes
+   from static/, not st.image, so any process serves it the same. */
+.banner {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin: 0.25rem 0 0.4rem 0;
+}
+
+/* The chat page's one-line header: what is connected, without taking room from the chat. */
+.chat-header {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.9rem;
+    padding-bottom: 0.7rem;
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.chat-brand {
+    font-weight: 800;
+    font-size: 1.15rem;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+}
+
+.chat-brand span { color: var(--brand); }
+
+.chat-meta {
+    color: var(--muted);
+    font-size: 0.85rem;
+}
+
+.page-title {
+    font-size: 1.55rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin: 1.3rem 0 0.15rem 0;
+}
+
+.page-subtitle {
+    color: var(--muted);
+    font-size: 0.93rem;
+    line-height: 1.55;
+    margin-bottom: 1.1rem;
+    max-width: 78ch;
+}
+
+.rule {
+    height: 3px;
+    width: 52px;
+    background: linear-gradient(90deg, var(--brand), var(--brand-deep));
+    border-radius: 3px;
+    margin-bottom: 1.6rem;
+}
+
+/* ---------- Pipeline diagram ---------- */
+
+.pipeline {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0;
+    padding: 1.15rem 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 1.4rem;
+    overflow-x: auto;
+}
+
+.node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    min-width: 92px;
+    flex: 0 0 auto;
+    transition: all var(--ease);
+}
+
+.node-dot {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.82rem;
+    font-weight: 700;
+    border: 2px solid var(--line);
+    background: var(--surface);
+    color: var(--faint);
+    transition: all var(--ease);
+}
+
+.node-title {
+    font-size: 0.79rem;
+    font-weight: 600;
+    color: var(--faint);
+    margin-top: 0.45rem;
+    transition: color var(--ease);
+}
+
+.node-detail {
+    font-size: 0.66rem;
+    color: var(--faint);
+    margin-top: 0.12rem;
+    max-width: 104px;
+    line-height: 1.3;
+}
+
+.node-time {
+    font-size: 0.66rem;
+    font-weight: 600;
+    color: var(--brand);
+    margin-top: 0.22rem;
+}
+
+.node.done .node-dot {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #FFFFFF;
+}
+
+.node.done .node-title { color: var(--ink); }
+
+.node.active .node-dot {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #FFFFFF;
+    animation: ring 1.3s ease-out infinite;
+}
+
+.node.active .node-title { color: var(--brand); }
+
+@keyframes ring {
+    0%   { box-shadow: 0 0 0 0 rgba(177, 24, 19, 0.45); }
+    70%  { box-shadow: 0 0 0 11px rgba(177, 24, 19, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(177, 24, 19, 0); }
+}
+
+.wire {
+    flex: 1 1 auto;
+    height: 2px;
+    background: var(--line);
+    margin-top: 17px;
+    min-width: 18px;
+    transition: background var(--ease);
+}
+
+.wire.done { background: var(--brand); }
+
+/* ---------- Chat bubbles ----------
+   These are written as plain HTML by app.py rather than through a Streamlit container.
+   Streamlit wraps every markdown element in an internal layout box, and one of those boxes
+   was measuring itself shorter than the text it holds. Since overflow stayed visible the
+   whole way up, the text itself was never actually clipped, but a background colour placed
+   on that box stopped short of covering it, which read as a bubble cut off partway through.
+   A div this file owns, sized by its own content, does not have that problem. */
+
+.bubble-user {
+    background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+    color: #FFFFFF;
+    border-radius: var(--radius);
+    border-top-right-radius: 4px;
+    padding: 0.75rem 1.15rem;
+    box-shadow: var(--shadow-lift);
+    width: fit-content;
+    max-width: 76%;
+    margin: 0 0 0.85rem auto;
+    font-size: 0.94rem;
+    line-height: 1.5;
+    animation: riseIn 0.38s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+}
+
+.bubble-user * { color: #FFFFFF !important; }
+.bubble-user p { margin: 0; }
+.bubble-user p + p { margin-top: 0.5rem; }
+
+.bubble-bot {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    border-top-left-radius: 4px;
+    padding: 1rem 1.2rem;
+    box-shadow: var(--shadow-sm);
+    max-width: 88%;
+    margin: 0 auto 1.5rem 0;
+    font-size: 0.94rem;
+    line-height: 1.6;
+    animation: riseIn 0.38s cubic-bezier(0.22, 0.9, 0.3, 1) both;
+    /* A table wider than the bubble scrolls the bubble itself rather than trying to manage
+       its own overflow. A long unbroken run of text, such as a URL or an id echoed from a
+       database row, wraps instead of running past the bubble's edge, which nothing here
+       did before for anything except a code block. */
+    overflow-x: auto;
+    overflow-wrap: anywhere;
+}
+
+.bubble-bot p { margin: 0 0 0.5rem 0; }
+.bubble-bot p:last-child { margin-bottom: 0; }
+.bubble-bot ol, .bubble-bot ul { margin: 0.3rem 0; padding-left: 1.3rem; }
+.bubble-bot li { margin-bottom: 0.2rem; }
+
+/* ---------- Answer typography ----------
+   Answers are Markdown converted to HTML, so they arrive carrying the full set of elements
+   rather than only paragraphs and lists. These rules are scoped to the bot bubble so a
+   reply reads as a document: section headings, a real table, a quotation, inline code. */
+
+.bubble-bot > :first-child { margin-top: 0; }
+.bubble-bot > :last-child { margin-bottom: 0; }
+
+.bubble-bot h1, .bubble-bot h2, .bubble-bot h3,
+.bubble-bot h4, .bubble-bot h5, .bubble-bot h6 {
+    color: var(--ink);
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+    margin: 1.1rem 0 0.4rem;
+    font-weight: 650;
+}
+.bubble-bot h1 { font-size: 1.3rem; }
+.bubble-bot h2 { font-size: 1.16rem; }
+.bubble-bot h3 { font-size: 1.04rem; }
+.bubble-bot h4, .bubble-bot h5, .bubble-bot h6 { font-size: 0.96rem; }
+
+.bubble-bot strong { font-weight: 650; color: var(--ink); }
+.bubble-bot em { font-style: italic; }
+
+.bubble-bot code {
+    background: var(--surface-alt);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.08em 0.34em;
+    font-size: 0.88em;
+}
+
+.bubble-bot pre {
+    background: var(--surface-alt);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 0.9rem;
+    overflow-x: auto;
+    margin: 0.6rem 0;
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+.bubble-bot pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+}
+
+.bubble-bot blockquote {
+    margin: 0.6rem 0;
+    padding: 0.1rem 0 0.1rem 0.85rem;
+    border-left: 3px solid var(--brand);
+    color: var(--muted);
+}
+.bubble-bot blockquote p:last-child { margin-bottom: 0; }
+
+.bubble-bot hr {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 0.9rem 0;
+}
+
+/* A table is the shape a result of rows takes, so it is given room to breathe: its own
+   scroll when it is wider than the bubble, a clear header, and alternating rows so a
+   long list can be followed down the page.
+
+   The table itself keeps the browser's ordinary table layout rather than being split into
+   two independent ones for its header and its body: that split used to let each compute its
+   own column widths from its own content, so a header rarely lined up with the data under
+   it. The horizontal scroll that a wide table still needs lives on the bubble as a whole
+   instead, which is the one thing here actually allowed to manage overflow on its own. */
+.bubble-bot table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.7rem 0 0.9rem;
+    font-size: 0.9rem;
+}
+.bubble-bot th, .bubble-bot td {
+    text-align: left;
+    padding: 0.42rem 0.7rem;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+}
+.bubble-bot th {
+    background: var(--surface-alt);
+    color: var(--ink);
+    font-weight: 650;
+    border-bottom: 2px solid var(--line);
+}
+.bubble-bot tbody tr:nth-child(even) { background: var(--surface-alt); }
+.bubble-bot td + td, .bubble-bot th + th { border-left: 1px solid var(--line); }
+.bubble-bot tbody tr:last-child td { border-bottom: none; }
+
+/* ---------- Thinking indicator ---------- */
+
+.thinking {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.2rem 0;
+    animation: riseIn 0.3s ease both;
+}
+
+.thinking-label {
+    color: var(--muted);
+    font-size: 0.88rem;
+    font-weight: 500;
+}
+
+.dots { display: inline-flex; gap: 5px; }
+
+.dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--brand);
+    animation: bounce 1.25s infinite ease-in-out both;
+}
+
+.dots span:nth-child(2) { animation-delay: 0.16s; }
+.dots span:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes bounce {
+    0%, 70%, 100% { transform: scale(0.75); opacity: 0.45; }
+    35%           { transform: scale(1.15); opacity: 1; }
+}
+
+/* ---------- Buttons ---------- */
+
+.stButton button {
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 0.62rem 1rem;
+    font-size: 0.88rem;
+    font-weight: 500;
+    text-align: left;
+    width: 100%;
+    transition: all var(--ease);
+    box-shadow: var(--shadow-sm);
+}
+
+.stButton button p,
+.stButton button div,
+.stButton button span {
+    color: inherit !important;
+    font-weight: inherit !important;
+    font-size: inherit !important;
+}
+
+.stButton button:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+    background: var(--brand-wash);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow);
+}
+
+.stButton button:active { transform: translateY(0); }
+
+.stButton button:focus:not(:active) {
+    border-color: var(--brand);
+    color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(177, 24, 19, 0.15);
+}
+
+.stButton button[kind="primary"] {
+    background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+    color: #FFFFFF;
+    border: none;
+    text-align: center;
+    font-weight: 600;
+}
+
+.stButton button[kind="primary"]:hover {
+    background: linear-gradient(135deg, var(--brand-hover), var(--brand));
+    color: #FFFFFF;
+    box-shadow: var(--shadow-lift);
+}
+
+/* ---------- Inputs ---------- */
+
+[data-testid="stChatInput"] {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    transition: border-color var(--ease), box-shadow var(--ease);
+}
+
+[data-testid="stChatInput"]:focus-within {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(177, 24, 19, 0.13), var(--shadow);
+}
+
+[data-testid="stChatInput"] textarea { font-size: 0.95rem; color: var(--ink); }
+
+[data-testid="stChatInput"] button {
+    background: var(--brand) !important;
+    border-radius: 9px !important;
+    transition: background var(--ease), transform var(--ease);
+}
+
+[data-testid="stChatInput"] button:hover {
+    background: var(--brand-hover) !important;
+    transform: scale(1.06);
+}
+
+/* The line under the chat input, in the same bottom bar. */
+.chat-footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+[data-testid="stTextInput"] input {
+    border-radius: var(--radius-sm);
+    border-color: var(--line);
+    font-size: 0.92rem;
+}
+
+[data-testid="stTextInput"] input:focus {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px rgba(177, 24, 19, 0.13);
+}
+
+/* ---------- Sidebar ---------- */
+
+[data-testid="stSidebar"] {
+    background: var(--surface);
+    border-right: 1px solid var(--line);
+}
+
+[data-testid="stSidebar"] .block-container { padding-top: 1.6rem; }
+
+.side-heading {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 1.4rem 0 0.55rem 0;
+}
+
+.side-brand {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.side-brand span { color: var(--brand); }
+
+.stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: var(--page);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    margin-bottom: 0.4rem;
+    font-size: 0.86rem;
+    transition: all var(--ease);
+}
+
+.stat:hover { border-color: var(--brand); background: var(--brand-wash); }
+.stat-label { color: var(--muted); }
+.stat-value { font-weight: 600; color: var(--ink); }
+
+.pill {
+    display: inline-block;
+    padding: 0.16rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.pill-ok { background: #E9F6EC; color: #1B7F35; }
+.pill-warn { background: var(--brand-wash); color: var(--brand); }
+/* ---------- Figures ---------- */
+
+.figure {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.2rem;
+    box-shadow: var(--shadow-sm);
+    transition: all var(--ease);
+}
+
+.figure:hover {
+    border-color: var(--brand);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow);
+}
+
+.figure-value {
+    font-size: 1.85rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--brand);
+    line-height: 1.1;
+}
+
+.figure-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 0.2rem;
+}
+
+/* ---------- Select boxes ---------- */
+
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+    border-radius: var(--radius-sm);
+    border-color: var(--line);
+    background: var(--page);
+    transition: all var(--ease);
+}
+
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:hover {
+    border-color: var(--brand);
+}
+
+/* ---------- Expanders ---------- */
+
+[data-testid="stExpander"] {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    box-shadow: none;
+    overflow: hidden;
+    transition: border-color var(--ease), box-shadow var(--ease);
+}
+
+[data-testid="stExpander"]:hover {
+    border-color: #D6D6D6;
+    box-shadow: var(--shadow-sm);
+}
+
+[data-testid="stExpander"] summary {
+    font-size: 0.83rem;
+    font-weight: 500;
+    color: var(--muted);
+    padding: 0.55rem 0.85rem;
+    transition: color var(--ease), background var(--ease);
+}
+
+[data-testid="stExpander"] summary:hover {
+    color: var(--brand);
+    background: var(--brand-wash);
+}
+
+[data-testid="stExpander"] details[open] summary {
+    border-bottom: 1px solid var(--line);
+}
+
+.panel-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0.95rem 0 0.35rem 0;
+}
+
+/* ---------- Code and tables ---------- */
+
+.stCode, pre {
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid var(--line);
+    font-size: 0.82rem !important;
+}
+
+/* Table definitions are long single lines. Wrapping them keeps the whole schema readable
+   instead of running off the right edge of the panel. */
+[data-testid="stCode"] pre,
+[data-testid="stCode"] code {
+    white-space: pre-wrap !important;
+    word-break: break-word;
+}
+
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+/* ---------- Notices ---------- */
+
+.notice {
+    padding: 0.85rem 1.1rem;
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--brand);
+    background: var(--brand-wash);
+    color: var(--ink);
+    font-size: 0.88rem;
+    animation: riseIn 0.3s ease both;
+}
+
+.notice strong { color: var(--brand); }
+
+.timing {
+    color: var(--muted);
+    font-size: 0.76rem;
+    margin-top: 0.55rem;
+}
+
+/* ---------- Scrollbar ---------- */
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: var(--page); }
+::-webkit-scrollbar-thumb {
+    background: #D2D2D2;
+    border-radius: 999px;
+    border: 2px solid var(--page);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--brand); }
+
+/* ---------- Narrow screens ---------- */
+
+@media (max-width: 640px) {
+    .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+    /* On a phone the sidebar starts collapsed, so the button that opens it is always in the
+       top bar. An opaque bar, and content starting below it, keep that button from sitting
+       on top of the first line of text as the page scrolls under it. */
+    header[data-testid="stHeader"] { background: var(--page); }
+    .block-container { padding-top: 4rem !important; }
+    /* The five-step diagram on an empty chat does not fit a phone's width, and it pushed the
+       welcome taller than the screen. The progress shown while answering is unaffected. */
+    .hero-pipeline { display: none; }
+    /* Targets the classes the bubbles actually carry. An earlier version of this rule named
+       keyed-container classes from before the bubbles became plain divs this file writes
+       directly, and matched nothing at all afterwards: phones kept the desktop 76%/88% width
+       from further up this file instead of the narrower one meant for them. */
+    .bubble-user { max-width: 92%; }
+    .bubble-bot { max-width: 100%; }
+    .page-title { font-size: 1.3rem; }
+    .node-detail { display: none; }
+    .node { min-width: 66px; }
+}

@@ -10,3 +10,12 @@ toolbarMode = "minimal"
 
 [browser]
 gatherUsageStats = false
+
+[server]
+# Files under static/ (the banner) are served at app/static/..., the same from any process,
+# instead of from the memory of whichever process drew the page.
+enableStaticServing = true
+# How long a session whose connection dropped (a Wi-Fi blip, a laptop going to sleep) is kept
+# for it to come back to, with its connection settings and chat intact. Streamlit's default is
+# two minutes.
+disconnectedSessionTTL = 300

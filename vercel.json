@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "",
+  "outputDirectory": "deploy/vercel",
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "https://chinhook-production-e92b.up.railway.app/",
+      "permanent": false
+    },
+    {
+      "source": "/:path*",
+      "destination": "https://chinhook-production-e92b.up.railway.app/:path*",
+      "permanent": false
+    }
+  ]
+}

@@ -1,5 +1,12 @@
-.venv
-__pycache__
-**/__pycache__
+# Version control, local environments and secrets never go into the image.
 .git
+.github
+.venv
+**/__pycache__
 .env
+.env.*
+# Only for the repository page and the Vercel redirect, not for the running app. Keeping the
+# screenshots out also keeps them from being served under app/static/.
+static/screenshots
+deploy
+vercel.json

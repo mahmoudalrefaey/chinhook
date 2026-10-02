@@ -1,66 +1,211 @@
 <div align="center">
 
-# Chinhook Database Chat
+<img src="static/banner.png" alt="Chinhook Database Chat: query your data, get real answers" width="100%">
 
-![Our Banner](assets/readme_banner.png)
+<h3>Ask your PostgreSQL or MySQL database questions in plain language.</h3>
 
-### Ask your PostgreSQL database questions in plain English.
+<p>
+Bring your own database and any OpenAI-compatible model. Chinhook finds the tables a question needs,<br>
+writes read-only SQL, checks it, runs it, verifies the result, and streams back an answer<br>
+that shows exactly how it was produced.
+</p>
 
-A database-aware assistant powered by **LangGraph**, **Azure OpenAI**, **Qdrant**, and **PostgreSQL**. It routes each message, retrieves live schema context, grounds values against real data, generates read-only SQL, validates and executes it, verifies the result, and explains the answer.
+<p>
+<a href="https://chinhook.vercel.app"><strong>Open the live app</strong></a>
+&nbsp;·&nbsp;
+<a href="#deploy-your-own">Deploy your own</a>
+&nbsp;·&nbsp;
+<a href="#how-it-works">How it works</a>
+&nbsp;·&nbsp;
+<a href="#troubleshooting">Troubleshooting</a>
+&nbsp;·&nbsp;
+<a href="SECURITY.md">Security</a>
+</p>
 
-<br/>
-
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![LangGraph](https://img.shields.io/badge/Workflow-LangGraph-1C3C3C?style=for-the-badge)
-![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![Azure OpenAI](https://img.shields.io/badge/LLM-Azure%20OpenAI-0078D4?style=for-the-badge)
-![Qdrant](https://img.shields.io/badge/Vector%20Store-Qdrant-DC244C?style=for-the-badge)
+<a href="https://chinhook.vercel.app"><img alt="Live app" src="https://img.shields.io/badge/Live%20app-chinhook.vercel.app-B11813?style=for-the-badge&logo=streamlit&logoColor=white"></a>
+<img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white">
+<img alt="Streamlit" src="https://img.shields.io/badge/UI-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white">
+<img alt="LangGraph" src="https://img.shields.io/badge/Agent-LangGraph-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white">
+<br>
+<img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
+<img alt="MySQL" src="https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white">
+<img alt="Qdrant" src="https://img.shields.io/badge/Vector%20index-Qdrant-DC244C?style=for-the-badge">
+<img alt="OpenAI-compatible" src="https://img.shields.io/badge/Models-OpenAI--compatible-412991?style=for-the-badge">
+<img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white">
+<img alt="Railway" src="https://img.shields.io/badge/Runs%20on-Railway-0B0D0E?style=for-the-badge&logo=railway&logoColor=white">
+<a href="LICENSE"><img alt="Apache 2.0 License" src="https://img.shields.io/badge/License-Apache%202.0-2EA44F?style=for-the-badge"></a>
 
 </div>
+
+<br>
+
+<p align="center">
+  <img src="static/screenshots/chat.png" alt="Chinhook answering 'Who are the top 5 artists by total sales?' with a table built from the query's rows" width="100%">
+</p>
 
 ---
 
 ## Contents
 
-- [At a glance](#at-a-glance)
-- [Why this project](#why-this-project)
+- [Highlights](#highlights)
+- [A closer look](#a-closer-look)
+- [Using the app](#using-the-app)
+- [What happens to your data](#what-happens-to-your-data)
 - [How it works](#how-it-works)
-- [Architecture](#architecture)
-- [Core capabilities](#core-capabilities)
-- [Technology stack](#technology-stack)
-- [Getting started](#getting-started)
+- [Supported databases and models](#supported-databases-and-models)
+- [Deploy your own](#deploy-your-own)
 - [Configuration](#configuration)
 - [Project structure](#project-structure)
-- [Safety and reliability](#safety-and-reliability)
-- [Limitations and implementation notes](#limitations-and-implementation-notes)
+- [Security and reliability](#security-and-reliability)
+- [Troubleshooting](#troubleshooting)
+- [Limitations](#limitations)
+- [Contributing](#contributing)
+- [Team](#team)
+- [License and credits](#license-and-credits)
 
 ---
 
-## At a glance
+## Highlights
 
-Chinhook Database Chat turns natural-language questions into database-backed answers. Instead of sending every message directly to a text-to-SQL prompt, it uses a routed, multi-stage workflow designed to make incorrect results easier to detect and contain.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-**The schema is discovered at runtime.** Table names, columns, types, and table-level evidence are read from the connected database. The application is not tied to the Chinhook table names, although the repository includes Chinhook seed-data references.
+### 🔌 Bring your own database and model
+Connect PostgreSQL or MySQL and any OpenAI-compatible endpoint on the setup screen. Nothing is configured in code, and nothing you enter is stored.
 
-| Interface | Entry point |
-|---|---|
-| Streamlit web app | `app.py` |
-| Terminal chat | `main.py` |
-| Shared workflow API | `chat_engine.py` / `scripts/generator.py` |
+</td>
+<td width="50%" valign="top">
+
+### 🔒 Read-only, enforced by the database
+Every connection the app opens is a read-only session, so a write fails at the database itself, even with a login that could write.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🧭 Built for real schemas
+The schema is searched, not pasted into a prompt: hybrid dense and lexical search over an index of your tables, expanded along foreign keys, plus an index of real values that turns "Americans" into `country = 'USA'`.
+
+</td>
+<td valign="top">
+
+### 🔍 Every answer shows its work
+Each answer comes with the tables that were searched, the SQL that ran, the rows it returned, the time each step took and the tokens it cost.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🤔 Asks instead of guessing
+If a question could mean two things ("How many Americans?": customers or employees?), Chinhook asks once and offers the options to pick from.
+
+</td>
+<td valign="top">
+
+### ⚡ Compound questions, in parallel
+A message holding several questions becomes several tasks. Each gets its own SQL, checks and retries, and they all run at the same time.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### ✅ Verified before it is reported
+Results are checked against what was asked: a "top 5" returns at most five rows, and a count returns one number. A failed check is repaired with the reason fed back.
+
+</td>
+<td valign="top">
+
+### 🧹 Keeps only what it needs
+Credentials live in your browser session only. The index of your schema expires after 7 days without use, or is deleted the moment you ask.
+
+</td>
+</tr>
+</table>
 
 ---
 
-## Why this project
+## A closer look
 
-| Challenge | How the workflow handles it |
-|---|---|
-| Greetings trigger unnecessary database work | A message router can answer non-database routes without touching the database. |
-| Multi-part questions lose sub-questions | The understanding stage splits a request into independent tasks. |
-| Valid SQL can still answer the wrong question | Result verification checks row shape, limits, and entity agreement. |
-| User-provided values may not match stored values | Grounding probes actual database values before adopting a mapping. |
-| Ambiguous requests are guessed or abandoned | Clarifications are attached to the relevant request or task and can resume it. |
-| One SQL error breaks later queries | Execution rolls back on failure, and connection handling can reconnect when needed. |
-| The workflow is difficult to inspect | Results include task traces, workflow events, timings, and token usage. |
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="static/screenshots/welcome.png" alt="The chat page before the first question, with the five-step pipeline and suggested questions">
+<p align="center"><b>Start</b>: the pipeline every question goes through, and questions to try</p>
+</td>
+<td width="50%" valign="top">
+<img src="static/screenshots/details.png" alt="How this answer was produced: step timings, tables retrieved and the SQL written">
+<p align="center"><b>See how</b>: time per step, tables retrieved, the exact SQL</p>
+</td>
+</tr>
+<tr>
+<td valign="top">
+<img src="static/screenshots/clarify.png" alt="An ambiguous question answered with a choice between customers and employees">
+<p align="center"><b>Clarify</b>: an ambiguous question is asked back once</p>
+</td>
+<td valign="top">
+<img src="static/screenshots/schema.png" alt="The schema page listing every table with approximate row counts">
+<p align="center"><b>Explore</b>: every table and view, read live from the database</p>
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="62%" valign="middle">
+
+### 📱 Works on a phone, and survives a dropped connection
+
+- The chat input stays pinned to the bottom of the screen, and each new answer scrolls into view as it streams in.
+- Chat and Schema are separate pages in the sidebar, so switching between them keeps your conversation.
+- If the connection drops (Wi-Fi blips, a laptop sleeps), you have **five minutes** to come back to the same session, with your connection settings and chat intact.
+
+</td>
+<td width="38%" align="center">
+<img src="static/screenshots/phone.png" alt="Chinhook on a phone, answering which genres bring in the most revenue" width="260">
+</td>
+</tr>
+</table>
+
+---
+
+## Using the app
+
+<img src="static/screenshots/setup.png" alt="The setup screen: database connection and model settings" width="440" align="right">
+
+1. **Open the app**: the [live instance](https://chinhook.vercel.app), or [your own deployment](#deploy-your-own).
+2. **Connect your database.** Pick PostgreSQL or MySQL, then paste the connection URL your provider gives you, or fill in the separate fields.
+   - For PostgreSQL, choose the schema to answer from (`public` by default).
+   - **SSL**: `prefer` encrypts when the server supports it, `require` always encrypts, and `disable` never does. An `sslmode` written in the URL itself takes precedence.
+   - The database must be **reachable from the internet**, because the app connects to it from its server.
+   - A login that can only read is recommended. The setup screen shows the SQL to create one.
+3. **Choose your model.** Pick a provider preset, or **Other** for any OpenAI-compatible base URL, then enter your API key and a model name. The model must support **tool (function) calling**. Under *Advanced*, an optional cheaper *fast model* writes the table descriptions during indexing.
+4. **Connect.** The app logs in to your database for real, checks that it can see your tables, and checks that the model answers and calls tools. If anything fails, it tells you what to change.
+5. **Wait for indexing, once.** The first time a database is connected, each table is read, your model describes it in one sentence, and the description is indexed. Reconnecting later reuses the index. **Refresh index** re-indexes only the tables that changed.
+6. **Ask.** Under every answer, **How this answer was produced** shows the pipeline, the tables, the SQL, the rows and the tasks the question became.
+
+The sidebar shows what is connected and the state of the index. It also holds **New chat**, **Change connection** and, under *Your data*, **Delete this database's index**, which removes everything the server holds about your database.
+
+<br clear="right">
+
+> [!TIP]
+> No database handy? Load the [Chinook sample database](https://github.com/lerocha/chinook-database) (a music store with artists, albums, tracks, customers and invoices) into a free hosted PostgreSQL or MySQL, then connect to it. The screenshots in this README use it.
+
+---
+
+## What happens to your data
+
+| What | Where it goes | How long |
+|---|---|---|
+| Your database URL, login and password, and your model API key | The server's memory, for your browser session only | Until you close the tab or change the connection. A dropped connection is held for five minutes so it can resume. Never written to disk, a database or the page URL |
+| Your database | Read by read-only queries only. Nothing is ever written to it | n/a |
+| The index: table and column names, a one-line description of each table, and common values of category-like columns (countries, statuses, genres) | The deployment's Qdrant | Deleted after `INDEX_RETENTION_DAYS` without use (7 by default), or immediately with **Delete this database's index** |
+| Your questions, the relevant part of your schema and the rows a query returns, plus a few sample rows per table at index time | Your model provider, through the API key you gave | As long as that provider keeps them |
+
+Columns that look like contact details (email, phone, address, names) are masked as `[redacted]` in the sample rows sent to the model, and they are never indexed as values.
 
 ---
 
@@ -68,424 +213,463 @@ Chinhook Database Chat turns natural-language questions into database-backed ans
 
 ```mermaid
 flowchart TD
-    START([message]) --> rewrite
-    rewrite --> route
-    route -->|greeting| greeting[end]
-    route -->|conversation / meta| conv[conversation_answer] --> END2([end])
-    route -->|clarification reply| plan
-    route -->|understand| understand
-    understand -->|ambiguous| clarify[clarify] --> END3([end])
-    understand -->|unsupported| answer
-    understand --> plan
-    plan --> retrieve
-    retrieve -->|no grounding needed| generate
-    retrieve -->|values to settle| ground
-    ground --> generate
-    generate --> validate
-    validate -->|rejected| repair
-    validate -->|safe| execute
-    execute -->|error| repair
-    execute --> verify
-    verify -->|pass| next_task[next_task]
-    verify -->|fail| repair
-    repair -->|retries left| retrieve
-    repair -->|gave up| next_task
-    next_task -->|more tasks| plan
-    next_task -->|done| answer[answer] --> END4([end])
+    START([your message]) --> route
+    route -->|small talk| greeting[short reply]
+    route -->|reply to an open question| understand
+    route -->|question| understand
+    understand -->|ambiguous| clarify["clarify: ask once, with options"]
+    understand -->|not in this database| answer
+    understand -->|one or more tasks| fanout{{"one subgraph per task, in parallel"}}
+
+    subgraph TASK["Each task's own subgraph"]
+        retrieve["retrieve tables"] --> generate["write SQL through a tool call"]
+        generate --> check["check, then run read-only"]
+        check -->|invalid or failed| repair
+        check -->|ok| verify
+        verify -->|failed, attempts left| repair
+        repair --> retrieve
+        verify -->|passed or attempts used up| done([task result])
+    end
+
+    fanout --> TASK
+    done --> answer["answer: streamed as it is written"]
 ```
 
-### The task lifecycle
+An ordinary question costs **three model calls**: understanding the question, writing SQL (once per task) and writing the answer (streamed).
 
-Each database task moves through a bounded sequence:
+1. **Route.** Small talk and replies to an open clarifying question are recognised without a model call.
+2. **Understand.** One call reads the message against the conversation and the slice of the schema retrieved for it. It splits a compound question into independent tasks and decides whether something has to be asked first.
+3. **Retrieve.** Each task runs a hybrid search over the index: dense embeddings combined with word overlap with table and column names. The results are expanded with the tables on the foreign-key path between the ones that matched. A second index of real values maps the user's words to what is actually stored.
+4. **Generate.** The model writes one `SELECT` through a tool call, given only the retrieved slice of the schema.
+5. **Check and run.** The query is parsed with [`sqlglot`](https://github.com/tobymao/sqlglot) in your database's dialect. It must be one statement, a `SELECT` only, using real tables only, with nothing from the forbidden list. It runs in a read-only transaction with a 10-second limit and a 500-row cap.
+6. **Verify.** Deterministic checks: did it run, does the result have the shape that was asked for, does it read the table the question was about. A failure is repaired with its reason fed back, up to a bounded number of attempts.
+7. **Answer.** The answer is written only from verified results and streamed as it is written. A multi-row result's table is built from the verified rows themselves, not retyped by the model.
 
-1. **Understand** the user's intent, entities, filters, metrics, and expected result shape.
-2. **Retrieve** schema context from the chat cache or Qdrant.
-3. **Ground** user-provided values against the live database.
-4. **Generate** SQL through the `run_sql_query` tool call.
-5. **Validate** that the query is a single, allowed `SELECT` and references real tables.
-6. **Execute** with a statement timeout and a bounded result fetch.
-7. **Verify** the result using deterministic checks, with a limited semantic check when needed.
-8. **Repair** failed tasks within the configured attempt limit.
-9. **Answer** using verified results, while keeping failed tasks from contributing stale rows.
-
----
-
-## Architecture
-
-### System overview
+### Architecture
 
 ```mermaid
 flowchart TB
-    subgraph UI["User interfaces"]
-        WEB["Streamlit · app.py"]
-        CLI["Terminal · main.py"]
+    U(["Browser"]) -->|"chinhook.vercel.app redirects here"| APP
+
+    subgraph RAILWAY["Railway project"]
+        APP["<b>App service</b><br/>Dockerfile · Streamlit (app.py)<br/>LangGraph agent · fastembed in-process<br/>one session runtime per browser"]
+        QD[("<b>Qdrant</b><br/>one pair of collections per database<br/>private network only")]
     end
 
-    subgraph API["Application entry layer"]
-        ENGINE["chat_engine.py"]
-        GENERATOR["scripts/generator.py"]
+    subgraph YOURS["Yours, entered on the setup screen"]
+        DB[("PostgreSQL / MySQL")]
+        LLM["OpenAI-compatible model"]
     end
 
-    subgraph FLOW["LangGraph workflow · agent/"]
-        ROUTER["Router"]
-        UNDERSTAND["Understand & split tasks"]
-        RETRIEVE["Schema retrieval"]
-        GROUND["Value grounding"]
-        GENERATE["SQL generation"]
-        VALIDATE["SQL validation"]
-        EXECUTE["Query execution"]
-        VERIFY["Result verification"]
-        REPAIR["Bounded repair"]
-        ANSWER["Answer composition"]
-        STATE["Typed state & chat session"]
-    end
-
-    subgraph SERVICES["Connected services"]
-        PG[("PostgreSQL")]
-        QD[("Qdrant")]
-        OLLAMA["Ollama · embeddings"]
-        AZURE["Azure OpenAI"]
-    end
-
-    WEB --> ENGINE
-    CLI --> GENERATOR
-    ENGINE --> FLOW
-    GENERATOR --> FLOW
-    ROUTER --> UNDERSTAND --> RETRIEVE --> GROUND --> GENERATE --> VALIDATE --> EXECUTE --> VERIFY
-    VERIFY -->|Failed| REPAIR --> RETRIEVE
-    VERIFY -->|Verified| ANSWER
-    STATE -. "workflow state" .- FLOW
-    RETRIEVE --> QD
-    RETRIEVE --> PG
-    GROUND --> PG
-    EXECUTE --> PG
-    QD --> OLLAMA
-    GENERATE --> AZURE
-    UNDERSTAND --> AZURE
-    ANSWER --> AZURE
+    APP -->|"QDRANT_URL (private network)"| QD
+    APP -->|"read-only SQL"| DB
+    APP -->|"HTTPS · your API key"| LLM
 ```
 
-### Main layers
-
-| Layer | Responsibility |
-|---|---|
-| **Presentation** | Streamlit and CLI; owns UI/session state and displays progress and results. |
-| **Application seam** | Shared entry points that call the workflow and normalize results. |
-| **Orchestration** | LangGraph nodes, transitions, timing, retry bounds, and result shaping. |
-| **Decision logic** | Routing, request understanding, grounding, and task planning. |
-| **Validation & verification** | SQL safety checks and result-level consistency checks. |
-| **Data access** | PostgreSQL connections, introspection, fingerprints, indexing, retrieval, and SQL execution. |
-| **Model access** | Centralized Azure OpenAI calls, JSON parsing, and token accounting. |
-
-### Routes
-
-The router classifies each message into one of six routes:
-
-- `greeting` — greetings, thanks, apologies, and goodbyes.
-- `conversation` — questions about the current conversation.
-- `meta` — questions about the assistant and its capabilities.
-- `clarification` — a reply to an outstanding clarification.
-- `followup` — a continuation or modification of a previous database question.
-- `database` — questions that require data from the database.
-
-The graph is compiled once per process. Conversation state is held by `ChatSession`; the workflow does not use a LangGraph checkpointer.
+- **One runtime per browser session.** It holds that session's database and model settings, in memory only, and every call made on the session's behalf uses it.
+- **One connection pool per database.** Every connection in it is switched to read-only before anything else runs on it.
+- **One pair of Qdrant collections per database.** They are named `chinhook_<16 hex>_tables` and `_values` from a hash of the database, schema, user and embedding model. No session can read another database's index, and reconnecting to the same database reuses its index.
+- **Embeddings run inside the app** with [fastembed](https://github.com/qdrant/fastembed) (`BAAI/bge-small-en-v1.5` by default, baked into the image at build time), so visitors only need to bring a chat model.
 
 ---
 
-## Core capabilities
+## Supported databases and models
 
-<details>
-<summary><strong>Dynamic schema discovery and retrieval</strong></summary>
+### Databases
 
-- Reads table and column metadata from the live PostgreSQL catalog.
-- Builds a word index from table and column names.
-- Uses the full schema for small indexed collections (up to the configured threshold of 25 points); larger collections use Qdrant retrieval (`top_k=5`).
-- Caches retrieved schema per chat session.
-- Enriches indexed table definitions with short evidence generated from sampled rows.
+**PostgreSQL** and **MySQL**, including their hosted forms: Supabase, Neon, Prisma Postgres, Amazon RDS and Aurora, Google Cloud SQL, Azure Database, Railway, Render, PlanetScale and others. Tested on PostgreSQL 18 and MySQL 8.4. MariaDB should work, but it is less tested.
 
-</details>
+- **Views**, **mixed-case names** and **non-`public` PostgreSQL schemas** are supported.
+- MySQL logins that use `caching_sha2_password` (the MySQL 8 default) work out of the box.
+- The database must accept connections from the internet. `localhost` and private networks are refused on a public deployment (see [Security](#security-and-reliability)).
 
-<details>
-<summary><strong>Value grounding</strong></summary>
+### Models
 
-- Probes textual columns using `ILIKE` against actual stored values.
-- If the hinted column does not match, ranks and probes other candidate text columns.
-- When needed, asks the grounding model to choose from a bounded list of values sampled from the database.
-- Uses a mapping only when it is confirmed against real stored values.
-- Can ask the user for clarification instead of silently filtering on an unverified value.
+Any endpoint that speaks the OpenAI Chat Completions API and supports **tool calling**:
 
-</details>
+| Provider | Base URL | Model |
+|---|---|---|
+| OpenAI | `https://api.openai.com/v1` | e.g. `gpt-4.1-mini` |
+| Azure OpenAI | `https://<resource>.openai.azure.com/openai/v1` | **your deployment name** |
+| OpenRouter | `https://openrouter.ai/api/v1` | e.g. `openai/gpt-4.1-mini` |
+| Groq | `https://api.groq.com/openai/v1` | a tool-calling model |
+| Google Gemini | `https://generativelanguage.googleapis.com/v1beta/openai` | e.g. `gemini-2.5-flash` |
+| Anthropic | `https://api.anthropic.com/v1` | e.g. a Claude Sonnet model |
+| Mistral | `https://api.mistral.ai/v1` | e.g. `mistral-large-latest` |
+| Other | any OpenAI-compatible `/v1` URL (Together, Fireworks, DeepSeek, a self-hosted vLLM, …) | as that server names it |
 
-<details>
-<summary><strong>SQL validation and execution</strong></summary>
+> [!NOTE]
+> **Azure OpenAI:** enter the **v1 base URL** above, not a full `…/openai/deployments/<name>/chat/completions?api-version=…` address, and use your **deployment name** as the model. The key must come from the same Azure resource.
 
-The validation path checks that:
-
-1. SQL parses as exactly one PostgreSQL statement.
-2. The statement is a `SELECT`.
-3. Forbidden operations are rejected after string literals are stripped.
-4. Referenced tables exist in the live catalog.
-
-Execution re-validates the query, applies a `statement_timeout` of **3,000 ms**, and fetches at most **50 rows**. On errors, the shared connection is rolled back.
-
-</details>
-
-<details>
-<summary><strong>Result verification and repair</strong></summary>
-
-Deterministic checks cover execution status, requested row limits, aggregate shape, single-row shape, entity agreement, and empty results. A limited semantic verification call is used only when deterministic checks remain inconclusive.
-
-Failed tasks can be retried up to `DEFAULT_MAX_ATTEMPTS`. When attempts are exhausted, the task's result rows are cleared so stale data cannot be used in the final answer.
-
-</details>
-
-<details>
-<summary><strong>Clarification and multi-task handling</strong></summary>
-
-- Splits compound requests into separate `TaskState` objects.
-- Associates clarification questions with the request or specific task they concern.
-- Resumes the relevant work after the user responds.
-- Keeps already completed tasks when only one task needs clarification.
-- Stores compact turn summaries rather than the full transcript.
-
-</details>
-
-<details>
-<summary><strong>Tracing and token accounting</strong></summary>
-
-Each turn can include the route, task-level trace, workflow events, stage timings, SQL, result rows, model name, and provider-reported token usage. Usage tracks input, output, total tokens, and LLM call count.
-
-</details>
+Endpoint quirks are handled automatically. These include reasoning models that refuse `temperature`, servers that only accept `max_tokens`, and servers that reject `stream_options`.
 
 ---
 
-## Technology stack
+## Deploy your own
 
-| Component | Role |
-|---|---|
-| Python 3.12 | Runtime |
-| LangGraph | Workflow orchestration |
-| PostgreSQL + `psycopg2` | Relational database |
-| Qdrant | Vector storage and schema retrieval |
-| Ollama + `nomic-embed-text` | Embeddings |
-| Azure OpenAI | Understanding, SQL generation, grounding, and answer composition |
-| SQLGlot | SQL parsing and validation support |
-| Streamlit | Web interface |
-| pandas | Tabular result handling |
-| uv | Dependency and environment management |
+A deployment is two services:
 
----
+| Service | What it is | Public? |
+|---|---|---|
+| **App** | This repository's `Dockerfile`: the Streamlit page, the agent, and the embedding model running in-process | Yes |
+| **Qdrant** | The vector index, `qdrant/qdrant` | **No**, and it never needs to be |
 
-## Getting started
+Nothing else runs on the server side, because visitors bring their own database and model key.
 
-### Prerequisites
+> [!IMPORTANT]
+> The app is a long-running Python server that keeps a WebSocket open to every browser, so it needs an **always-on container host**: Railway, Render, Fly.io, a VM, or anything else that runs Docker. Function or serverless platforms such as Vercel cut the connection every few minutes and lose sessions. See [Why not Vercel](#why-not-vercel-or-other-function-platforms).
 
-- Python **3.12**
-- A reachable PostgreSQL database
-- A reachable Qdrant instance
-- Ollama serving `nomic-embed-text`
-- An Azure OpenAI resource with both configured deployments
-- [uv](https://docs.astral.sh/uv/) installed
+### On Railway (recommended)
 
-### 1. Get the project and configure the environment
+<details open>
+<summary><b>1. Create the Qdrant service</b></summary>
+
+<br>
+
+1. In a Railway project: **New → Docker Image** → `qdrant/qdrant:v1.19.1`.
+2. **Settings → Volumes**: add a volume mounted at `/qdrant/storage`, so indexes survive a redeploy.
+3. **Variables**:
+
+   ```dotenv
+   # Qdrant refuses every request without this key. Use a long random string,
+   # for example the output of: openssl rand -hex 32
+   QDRANT__SERVICE__API_KEY=<a-long-random-string>
+
+   # Listen on IPv6 as well as IPv4. Railway's private network is IPv6-only in some
+   # environments, and Qdrant listens on IPv4 alone by default.
+   QDRANT__SERVICE__HOST=::
+   ```
+
+4. **Do not** generate a public domain for it. The app reaches it over Railway's private network.
+
+</details>
+
+<details open>
+<summary><b>2. Create the app service</b></summary>
+
+<br>
+
+1. **New → GitHub Repo** → this repository (or your fork) and the branch to deploy. Railway finds the `Dockerfile` and builds it.
+2. **Variables**. Railway fills in the `${{…}}` references from the Qdrant service; replace `Qdrant` with your Qdrant service's exact name.
+
+   ```dotenv
+   QDRANT_URL=http://${{Qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333
+   QDRANT_API_KEY=${{Qdrant.QDRANT__SERVICE__API_KEY}}
+
+   # Optional: the defaults are shown
+   INDEX_RETENTION_DAYS=7
+   MAX_INDEX_TABLES=200
+   MAX_CONCURRENT_INDEX_JOBS=2
+   RATE_LIMIT_PER_SESSION_PER_MINUTE=10
+   RATE_LIMIT_GLOBAL_PER_MINUTE=120
+   # APP_PASSPHRASE=a shared passphrase in front of the whole app
+   ```
+
+3. **Settings → Networking → Generate Domain** (or attach your own domain).
+4. **Settings → Deploy → Healthcheck Path**: `/_stcore/health`.
+5. Give it **at least 1 GB of memory**. The embedding model, Streamlit and a couple of concurrent indexing jobs together use most of that.
+6. Keep it at **one replica**. Each browser's session lives in the memory of the process it connected to.
+
+Railway sets `PORT`, and the app listens on it.
+
+</details>
+
+<details open>
+<summary><b>3. Check it</b></summary>
+
+<br>
+
+Open the app's domain, connect a database and a model, and ask a question. The first time a database is connected, Qdrant's logs show the collections `chinhook_<16 hex>_tables` and `chinhook_<16 hex>_values` being created, next to `chinhook__registry`, which retention uses to track when each index was last used.
+
+</details>
+
+### Anywhere else that runs Docker
+
+The image is the same everywhere: set the variables above, let the platform route to `$PORT` (8501 when it sets none), and point its health check at `/_stcore/health`.
 
 ```bash
-git clone https://github.com/mahmoudalrefaey/chinhook.git
-cd chinhook
-
-cp .env.example .env
+docker build -t chinhook .
+docker run -d --name chinhook -p 8501:8501 \
+  -e QDRANT_URL=https://<your-cluster>.cloud.qdrant.io:6333 \
+  -e QDRANT_API_KEY=<your-qdrant-key> \
+  chinhook
 ```
 
-Fill in the required values in `.env` before starting the application.
+- **Render**: create a *Web Service* from the repository.
+- **Fly.io**: `fly launch` picks up the `Dockerfile`.
+- **Qdrant elsewhere**: the app only knows Qdrant as `QDRANT_URL` and `QDRANT_API_KEY`, so moving it to [Qdrant Cloud](https://cloud.qdrant.io) or another host changes only those two variables. Existing indexes don't need to move: a database whose index is missing is simply indexed again when it connects. For an `https://` URL without a port, port 443 is used.
 
-### 2. Install dependencies
+### Keeping a Vercel address
 
-```bash
-uv sync
-```
+The root [`vercel.json`](vercel.json) turns a Vercel project into a redirect to the app, which is how `chinhook.vercel.app` points at the Railway deployment.
 
-### 3. Prepare the database
+- It sets the framework to "Other" with no install or build step, which overrides whatever preset the Vercel project has.
+- It serves the small fallback page in [`deploy/vercel/`](deploy/vercel/index.html).
+- It redirects every path to the app.
 
-If you are using the included Chinhook seed data, `data/deploy.py` is the loader referenced by the project. **Review and configure its database connection before running it.** The script is a one-off CSV-to-PostgreSQL loader.
+To point it at your own deployment:
 
-### 4. Start the application
+1. Replace the app address in both redirect rules of `vercel.json` and in `deploy/vercel/index.html`. There are two rules because `/:path*` does not match the bare `/`.
+2. Leave the Vercel project's **Root Directory** at the repository root, so Vercel reads that file.
+3. Redeploy. `curl -I https://<your-project>.vercel.app` should answer `307`, with a `location` header pointing at the app.
 
-**Web interface**
+### Why not Vercel or other function platforms
 
-```bash
-uv run --with streamlit streamlit run app.py
-```
+Vercel can run this `Dockerfile` as a container function, and that was tried first. Its logs showed why it doesn't work for this app:
 
-**Terminal interface**
+- **The live connection is cut every 5 minutes.** A function invocation ends at the plan's time limit (300 seconds on Hobby), and the browser's WebSocket ends with it. Each cut freezes the tab while it reconnects.
+- **One browser's requests reach several copies of the app.** Streamlit keeps each visitor's session (their connection settings and their chat) in one process's memory. A reconnect that lands on another copy starts over at the setup screen.
 
-```bash
-uv run python main.py
-```
+An always-on container keeps one process for every session, and a dropped connection comes back to the same session for five minutes (`server.disconnectedSessionTTL` in [`.streamlit/config.toml`](.streamlit/config.toml)).
 
-### 5. Manage the schema index
+### Operator checklist
 
-```bash
-# Inspect index status
-uv run python scripts/indexer.py --status
-
-# Check whether indexing is needed
-uv run python scripts/indexer.py --check
-
-# Rebuild the index
-uv run python scripts/indexer.py --full
-```
-
-### 6. Run with Docker
-
-```bash
-docker build -t Chinhook .
-docker run -p 8501:8501 --env-file .env Chinhook
-```
-
-The container starts the web interface and a co-located Ollama service. PostgreSQL and Qdrant are expected to be reachable separately.
+- [ ] Qdrant has `QDRANT__SERVICE__API_KEY` set and **no public domain**.
+- [ ] The app's `QDRANT_API_KEY` matches it (a reference variable keeps them in sync).
+- [ ] The healthcheck path is `/_stcore/health`; the app has one replica and at least 1 GB of memory.
+- [ ] Rate limits and `MAX_INDEX_TABLES` suit how much load the server can take.
+- [ ] `INDEX_RETENTION_DAYS` matches what you tell visitors about how long their index is kept.
+- [ ] Any key that has ever been pasted somewhere public has been rotated.
 
 ---
 
 ## Configuration
 
-The application loads environment values through `config.py`.
+Everything below belongs to whoever runs the deployment and is read from environment variables. Visitors' databases and models are never configured here.
 
-| Variable | Purpose |
-|---|---|
-| `AZURE_OPENAI_KEY` | Shared Azure OpenAI API key |
-| `AZURE_OPENAI_ENDPOINT1` | Endpoint for deployment 1 |
-| `DEPLOYMENT1_NAME` | Deployment name for deployment 1 |
-| `AZURE_OPENAI_ENDPOINT2` | Endpoint for deployment 2 |
-| `DEPLOYMENT2_NAME` | Deployment name for deployment 2 |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `QDRANT_URL` | Qdrant URL; defaults to `http://localhost:6333` |
-| `QDRANT_COLLECTION` | Collection name; defaults to `schema_tables` |
-| `AUTO_INDEX_ON_STARTUP` | Whether the CLI checks the index at startup; defaults to `true` |
-| `INDEX_CHECK_INTERVAL` | Parsed configuration value; currently no scheduler consumes it |
-
-Additional implementation details:
-
-- The configured model identifiers are hardcoded in `config.py` as `gpt-4.1-nano` and `gpt-4.1-mini`.
-- `MODEL1_NAME` and `MODEL2_NAME` appear in `.env.example` but are not read by the current configuration module.
-- `OLLAMA_HOST` and the embedding model/dimension are defined in code rather than read from environment variables.
-- PostgreSQL connections use `sslmode="require"`.
+| Variable | Default | Purpose |
+|---|---|---|
+| `QDRANT_URL` | **required** | Where Qdrant is, e.g. `http://qdrant.railway.internal:6333`. Without it, the page shows a clear configuration error |
+| `QDRANT_API_KEY` | — | Qdrant's API key (its `QDRANT__SERVICE__API_KEY`). Set it whenever Qdrant is reachable over a network |
+| `QDRANT_COLLECTION_PREFIX` | `chinhook` | Prefix of every collection the app creates, so a shared Qdrant stays tidy and retention never touches anything else |
+| `EMBED_MODEL` | `BAAI/bge-small-en-v1.5` | [fastembed](https://github.com/qdrant/fastembed) model for the index. Changing it is safe: indexes are rebuilt as databases reconnect |
+| `FASTEMBED_CACHE_PATH` | `/app/.cache/fastembed` (in the image) | Where the embedding model is cached. The image downloads the default model there at build time |
+| `INDEX_RETENTION_DAYS` | `7` | Days an unused index is kept. `0` keeps indexes forever |
+| `MAX_INDEX_TABLES` | `200` | Databases with more tables and views than this are refused rather than indexed |
+| `MAX_CONCURRENT_INDEX_JOBS` | `2` | How many databases may be indexing at once |
+| `APP_PASSPHRASE` | — | Optional shared passphrase in front of the whole app |
+| `RATE_LIMIT_PER_SESSION_PER_MINUTE` | `10` | Questions per browser session per minute |
+| `RATE_LIMIT_GLOBAL_PER_MINUTE` | `120` | Questions across all sessions per minute |
+| `PORT` | `8501` | The port to listen on. Railway and most platforms set it themselves |
 
 ---
 
 ## Project structure
 
 ```text
-Chinhook/
-├── app.py                     # Streamlit web interface
-├── main.py                    # Terminal interface
-├── chat_engine.py             # Shared workflow entry point
-├── config.py                  # Environment and model configuration
-├── pyproject.toml             # Project metadata and dependencies
-├── uv.lock                    # Locked dependencies
-├── Dockerfile
-├── start.sh
-├── .env.example
-├── agent/
-│   ├── graph.py               # LangGraph assembly and execution
-│   ├── router.py              # Message classification
-│   ├── state.py               # Typed workflow and session state
-│   ├── schema.py              # Live catalog and schema cache
-│   ├── verify.py              # Deterministic result checks
-│   ├── llm.py                 # Model calls and token accounting
-│   ├── session.py             # Chat-session creation
-│   └── nodes/
-│       ├── route.py
-│       ├── routing.py
-│       ├── greeting.py
-│       ├── understand.py
-│       ├── clarify.py
-│       ├── plan.py
-│       ├── retrieve.py
-│       ├── ground.py
-│       ├── generate.py
-│       ├── validate.py
-│       ├── execute.py
-│       ├── verify.py
-│       ├── repair.py
-│       ├── answer.py
-│       ├── common.py
-│       └── prompts.py
-├── scripts/
-│   ├── generator.py            # Shared generator interface
-│   ├── indexer.py              # Index maintenance CLI
-│   ├── db_module.py            # Compatibility re-export
-│   └── db/
-│       ├── clients.py
-│       ├── introspection.py
-│       ├── fingerprinting.py
-│       ├── evidence.py
-│       ├── indexing.py
-│       ├── retrieval.py
-│       └── sql.py
-├── ui/
-│   └── render.py               # Markdown/HTML rendering helpers
-├── assets/
-│   ├── styles.css
-│   ├── banner.png
-│   └── icon.svg
-└── data/                       # Local seed data; gitignored
-    ├── *.csv
-    ├── Schema.jpg
-    └── deploy.py
+.
+├── app.py                    # The Streamlit page: setup, indexing, and the Chat and Schema pages
+├── chinhook/                 # Everything app.py calls
+│   ├── chat_engine.py        #   The one entry point the page uses: answer, index, schema
+│   ├── connection.py         #   Setup: reading what was typed, the public-host guard, checks
+│   ├── runtime.py            #   The database and model one browser session is connected to
+│   ├── config.py             #   The deployment's own settings, from environment variables
+│   ├── rate_limit.py         #   Per-session and global limits
+│   ├── agent/                #   The LangGraph workflow
+│   │   ├── graph.py          #     Parent graph: routing, parallel tasks, timing
+│   │   ├── task_graph.py     #     One task: retrieve, write SQL, check and run, verify, repair
+│   │   ├── llm.py            #     OpenAI-compatible model calls, streaming, token accounting
+│   │   ├── router.py         #     Routing that needs no model call
+│   │   ├── schema.py         #     Per-database catalog cache and schema retrieval
+│   │   ├── verify.py         #     Deterministic result checks
+│   │   ├── state.py          #     Typed workflow and session state
+│   │   └── nodes/            #     route, understand, clarify, greeting, answer, prompts
+│   ├── db/                   #   Database access and the vector index
+│   │   ├── clients.py        #     Per-database connection pools, Qdrant, embeddings
+│   │   ├── dialects.py       #     What differs between PostgreSQL and MySQL
+│   │   ├── introspection.py  #     Tables, views, columns, foreign keys, row estimates
+│   │   ├── indexing.py       #     Building and updating the index
+│   │   ├── fingerprinting.py #     Whether the index still matches the database
+│   │   ├── retrieval.py      #     Hybrid table search and value search
+│   │   ├── evidence.py       #     The one-line description of each table
+│   │   ├── values.py         #     Which column values are worth indexing
+│   │   ├── pii.py            #     Columns treated as contact details
+│   │   ├── retention.py      #     Expiring indexes nobody uses
+│   │   └── sql.py            #     SQL validation and read-only execution
+│   └── ui/
+│       ├── render.py         #     Markdown rendering and sanitising, the pipeline diagram
+│       └── styles.css        #     The page's styles
+├── static/                   # Served at app/static/: the banner and icon (screenshots are for this README only)
+├── .streamlit/config.toml    # Theme, static file serving, how long a dropped session is kept
+├── deploy/vercel/            # The fallback page for the Vercel redirect
+├── vercel.json               # Makes a Vercel project a redirect to the app
+├── Dockerfile                # The image Railway, or any Docker host, runs
+├── pyproject.toml, uv.lock   # Dependencies, locked
+├── LICENSE, NOTICE           # Apache 2.0, plus the credit and naming terms every copy keeps
+└── SECURITY.md               # How to report a vulnerability
 ```
 
-### Useful module map
+---
 
-| Module | What it owns |
-|---|---|
-| `agent/graph.py` | Node registration, edges, conditional routing, timing, recursion limit, and result shaping |
-| `agent/router.py` | Route classification and clarification-reply resolution |
-| `agent/nodes/understand.py` | Request parsing, task decomposition, and ambiguity handling |
-| `agent/nodes/ground.py` | Live value probing and mapping |
-| `agent/nodes/validate.py` | SQL safety gates |
-| `agent/nodes/execute.py` | Query execution and task result capture |
-| `agent/verify.py` | Deterministic verification rules |
-| `agent/nodes/repair.py` | Bounded retry and task advancement |
-| `agent/nodes/answer.py` | Final response composition and completeness guard |
-| `scripts/db/indexing.py` | Full and incremental schema indexing |
-| `scripts/db/fingerprinting.py` | Schema/data fingerprint comparison |
-| `scripts/db/retrieval.py` | Schema retrieval from the vector store |
-| `scripts/db/sql.py` | SQL validation and read-only query execution |
-| `ui/render.py` | Markdown rendering, tables, and pipeline visualization |
+## Security and reliability
+
+- **Read-only at the database.**
+  - PostgreSQL sessions run every transaction as `READ ONLY`.
+  - MySQL sessions are set to `SET SESSION TRANSACTION READ ONLY`, and each borrowed connection starts with `START TRANSACTION READ ONLY`.
+  - A write fails at the database even with a superuser login, even if every check above it were fooled.
+- **SQL validation.**
+  - One statement only: a `SELECT`, or a `UNION`/`INTERSECT`/`EXCEPT` of them.
+  - The whole syntax tree is walked for writes hidden in CTEs, as well as `INTO`, `SET`, `COPY` and `GRANT`.
+  - Each dialect has its own forbidden functions:
+    - PostgreSQL: `pg_sleep`, `pg_read_file`, `dblink` and more.
+    - MySQL: `SLEEP`, `BENCHMARK`, `LOAD_FILE`, `GET_LOCK` and more.
+- **Only your schema.** A query may read only the tables and views of the connected schema. The database's own catalog is also allowed, so questions about the database itself can be answered.
+- **Bounded.**
+  - Each query has a 10-second limit and returns at most 500 rows. A cut-off result is flagged, never presented as complete.
+  - Repair attempts are bounded.
+  - There are limits on the tables indexed and on concurrent indexing jobs.
+  - Questions are rate-limited per session and globally, and setup attempts are rate-limited too.
+- **Can't reach the server's own network.**
+  - Database hosts and model URLs must resolve to public addresses.
+  - `localhost`, private and link-local ranges, cloud metadata addresses, and names like `qdrant.railway.internal` are refused.
+  - The check runs again whenever a new connection pool is opened, and the model client never follows redirects.
+- **Isolation between visitors.** Connection settings, chat history and schema caches are per session. Connection pools, model clients (keyed by a hash of the API key) and Qdrant collections are per database or per key. None of them are shared between visitors.
+- **Sanitised output.** Answers are Markdown rendered through an allowlist HTML sanitiser ([nh3](https://github.com/messense/nh3)), so neither a model's reply nor a value in your data can inject script into the page.
+- **Optional gate.** `APP_PASSPHRASE` puts one shared passphrase in front of the whole app. It is compared in constant time.
+
+Found a security problem? Please report it privately, as described in [SECURITY.md](SECURITY.md).
 
 ---
 
-## Safety and reliability
+## Troubleshooting
 
-- **Read-only query path:** the SQL tool is intended for `SELECT` statements only.
-- **Single-statement validation:** multiple SQL statements are rejected.
-- **Live catalog checks:** referenced tables are checked against the connected database.
-- **Bounded execution:** queries use a statement timeout and a maximum fetched-row count.
-- **Bounded repair:** retries are controlled by an attempt limit.
-- **Verified-only answer composition:** failed tasks do not contribute stale rows or figures.
-- **Error recovery:** SQL failures trigger rollback; a dead connection can be re-established.
-- **Traceability:** task-level state, workflow events, timing, and token usage are returned for inspection.
+<details>
+<summary><b>"Something is wrong with this deployment … <code>QDRANT_URL is not set</code>"</b></summary>
 
-> **Credential caution:** The source notes that `data/deploy.py` contains a hardcoded PostgreSQL connection string with a password. Treat that credential as exposed if it was ever shared or committed, and rotate it. Do not commit secrets to the repository.
+<br>
+
+The app service has no `QDRANT_URL`. Set it on the **app** service (not on Qdrant), for example `http://${{Qdrant.RAILWAY_PRIVATE_DOMAIN}}:6333` on Railway, then redeploy.
+
+</details>
+
+<details>
+<summary><b>"The search index (Qdrant) at … could not be reached" or <code>timed out</code></b></summary>
+
+<br>
+
+- Use the **private** address with the scheme and port: `http://<qdrant-service>.railway.internal:6333`. A bare `qdrant.railway.internal:6333` without `http://` is not a URL.
+- Add `QDRANT__SERVICE__HOST=::` to the **Qdrant** service and redeploy it. Some Railway private networks are IPv6-only, and Qdrant listens on IPv4 alone by default.
+- Make sure the app's `QDRANT_API_KEY` is the same value as Qdrant's `QDRANT__SERVICE__API_KEY`. A reference variable (`${{Qdrant.QDRANT__SERVICE__API_KEY}}`) keeps them in sync.
+- If you really must use Qdrant's *public* domain, use `https://<domain>` with **no port**. Railway's public domains serve on 443, not on 6333.
+
+</details>
+
+<details>
+<summary><b>"<i>host</i> is not a public address"</b></summary>
+
+<br>
+
+The app connects to your database and model from its own server, so both must be reachable from the internet. `localhost`, private IPs and internal names such as `*.railway.internal` are refused on purpose. Use the public host your provider gives you. On Railway, for example, that is the database's *public* TCP proxy address.
+
+</details>
+
+<details>
+<summary><b>"Connected, but schema "public" has no tables or views this login can read"</b></summary>
+
+<br>
+
+The login worked, but there is nothing to answer from:
+
+- The tables live in another schema. Enter that schema on the setup screen.
+- The database is still empty. A freshly created hosted database, a Prisma Postgres instance before its first migration for example, has no tables until you create or migrate them.
+- The login has no `SELECT` grant on the tables. The setup screen shows the SQL to grant it.
+
+</details>
+
+<details>
+<summary><b>"The API key was rejected" (especially with Azure OpenAI)</b></summary>
+
+<br>
+
+- Check that the key belongs to the provider whose base URL you entered.
+- For **Azure OpenAI**, use `https://<resource>.openai.azure.com/openai/v1` as the base URL and your **deployment name** as the model, with a key from that same resource. Don't paste a full `…/deployments/…/chat/completions?api-version=…` address.
+
+</details>
+
+<details>
+<summary><b>"The model was not found at this base URL"</b></summary>
+
+<br>
+
+The model name doesn't exist at that endpoint. Use the provider's exact model ID (or, on Azure, the deployment name), and make sure the base URL is the provider's OpenAI-compatible root, usually ending in `/v1`.
+
+</details>
+
+<details>
+<summary><b>The tab freezes, or goes back to the setup screen after a few minutes</b></summary>
+
+<br>
+
+The app is running on a function or serverless platform that cuts connections and spreads requests over several copies. Run it on an always-on container host instead; see [Why not Vercel](#why-not-vercel-or-other-function-platforms). A short drop of five minutes or less on an always-on host resumes the same session.
+
+</details>
+
+<details>
+<summary><b>Vercel: "Found app.py but it does not export a top-level app, application or handler"</b></summary>
+
+<br>
+
+Vercel is trying to build the app as a Python function. Keep the root [`vercel.json`](vercel.json): it overrides the project's framework preset and turns the deployment into a redirect. Renaming `app.py` does not help; it only changes the error to "No python entrypoint found".
+
+</details>
+
+<details>
+<summary><b>"Too many attempts in a short time" or a question-rate message</b></summary>
+
+<br>
+
+You've reached a rate limit. Wait the number of seconds shown and try again. Operators can raise the limits with `RATE_LIMIT_PER_SESSION_PER_MINUTE` and `RATE_LIMIT_GLOBAL_PER_MINUTE`.
+
+</details>
 
 ---
 
-## Limitations and implementation notes
+## Limitations
 
-- **No automated test suite was found** in the documented working tree, although `pytest` is listed as a development dependency.
-- **No runtime verification was performed** for this documentation pass. The workflow description is based on code inspection; no LLM calls or database queries were run.
-- **No LangGraph checkpointer or durable conversation store** is configured. Chat state is held in the caller's session.
-- **No authentication or rate limiting** is implemented in the described application. Streamlit session state provides the chat-session boundary.
-- **No write operations** are exposed through the SQL tool.
-- `chat_engine.compare()` runs model comparisons sequentially.
-- `INDEX_CHECK_INTERVAL` is loaded but has no active scheduler consumer.
-- `validate_config()` has a known mismatch: it checks the mini deployment but reports the nano deployment's environment-variable names when configuration is missing.
-- The `.env` file is local configuration and should not be committed. Supply the required API key, database URL, and deployment settings securely.
+- Retrieval is only as good as the index. A table with an unhelpful name and no distinguishing sample data is harder to find.
+- Dependencies between the tasks of one message are limited: a filter can be shared from one task's question to another's, but tasks don't share actual query results.
+- Row counts on the Schema page come from the database's statistics and are approximate.
+- Sessions live in the memory of one app process. Run one replica; a restart or redeploy asks everyone to connect again, but indexes are kept.
+- Databases must be reachable from the internet. There is no SSH tunnel or private-network option for visitors' databases.
+- The optional login is one shared passphrase, not per-user accounts.
 
 ---
+
+## Contributing
+
+Issues and pull requests are welcome, and contributions are accepted under the same Apache 2.0 license. This branch is the **deployment** branch: it holds exactly what runs in production and nothing for local tooling, so keep changes here deployable as they are. Please report security problems privately, as described in [SECURITY.md](SECURITY.md).
+
+---
+
+## Team
+
+<table>
+<tr>
+<td align="center" width="25%"><b>Mahmoud Muhammad Refaey</b><br><a href="https://github.com/mahmoudalrefaey">@mahmoudalrefaey</a></td>
+<td align="center" width="25%"><b>Mohamed Taha</b><br><a href="https://github.com/mohamedtaha77">@mohamedtaha77</a></td>
+<td align="center" width="25%"><b>Mariam Adel</b></td>
+<td align="center" width="25%"><b>Roaa Elmarakby</b></td>
+</tr>
+</table>
+
+Supported & sponsored by **GBG Global Brands Group**.
+
+---
+
+## License and credits
+
+Released under the [Apache License 2.0](LICENSE). © 2026 Mahmoud Muhammad Refaey and the Chinhook contributors.
+
+You may use, modify and redistribute the code, including commercially. Any copy or derivative must keep the copyright and the [NOTICE](NOTICE) file, which credits the original. The license covers the code, not the names: **"Chinhook", its icon and banner, and the GBG Global Brands Group name and logo are not licensed**. A fork or a service built on this code must use its own name and branding and must not present itself as Chinhook or as endorsed by its team or sponsor. Saying "based on Chinhook" with a link back to this repository is welcome.
+
+Chinhook is built on [Streamlit](https://streamlit.io), [LangGraph](https://github.com/langchain-ai/langgraph), [Qdrant](https://qdrant.tech), [fastembed](https://github.com/qdrant/fastembed), [sqlglot](https://github.com/tobymao/sqlglot) and [SQLAlchemy](https://www.sqlalchemy.org). The screenshots use the [Chinook sample database](https://github.com/lerocha/chinook-database).
+
+<br>
 
 <div align="center">
 
-**Built around a simple idea:** a database answer should be grounded in the data, checked before it is reported, and understandable to the person who asked.
+**Chinhook is supported & sponsored by GBG Global Brands Group.**
+
+<sub>Built around a simple idea: a database answer should be grounded in the data, checked before it is reported, and understandable to the person who asked.</sub>
 
 </div>

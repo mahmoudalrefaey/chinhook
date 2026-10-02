@@ -1,31 +1,27 @@
-# Node
-node_modules/
-npm-debug.log
-
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 .venv/
-.kilo/
-data/
+
+# Secrets: a deployment is configured through its platform's variables, never a file here
+.env
+.env.*
+
+# Local-only work, kept out of this deployment branch
+tests/
+.github/
 
 # Tooling caches
 .pytest_cache/
-.mypy_cache/
 .ruff_cache/
-.ipynb_checkpoints/
-.coverage
-htmlcov/
+.mypy_cache/
 
-# Environment files
-.env
+# Platform CLIs
+.vercel/
+.railway/
 
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
-
-# Build output
-dist/
-build/
+Thumbs.db
