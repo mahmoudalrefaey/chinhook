@@ -2,7 +2,7 @@
 
 Three routes, decided from the shape of the message alone, with no model call:
 
-    greeting        small talk, no information needed
+    greeting        small talk, or a question about the assistant: no information needed
     clarification   an answer to the question the assistant is waiting on
     question        everything else, read by node_understand
 
@@ -43,6 +43,26 @@ _THANKS = re.compile(
 )
 
 
+# A question about the assistant itself, as the whole of a message. "Chinhook" may stand in
+# for "you", and a trailing "?" is fine.
+_ABOUT_THE_ASSISTANT = re.compile(
+    r"""^\s*(hi|hey|hello)?[,\s]*
+        (
+            (what('?s|\s+is)\s+your\s+name)
+          | (who|what)\s+(are|r)\s+(you|u)
+          | (who|what)\s+is\s+chinhook
+          | (who|which\s+company)\s+(made|built|created|developed|trained)\s+(you|chinhook)
+          | (what|which)\s+(ai\s+)?(model|llm|language\s+model)\s+
+            (are\s+you|do\s+you\s+use|is\s+this|powers\s+(you|this|chinhook)|are\s+you\s+using|is\s+behind\s+(you|this))
+          | are\s+you\s+(chat\s*gpt|gpt(-?\d[\w.-]*)?|claude|gemini|llama|an?\s+ai|a\s+bot|a\s+robot|a\s+human|human|real)
+          | (please\s+)?introduce\s+yourself
+          | tell\s+me\s+about\s+yourself
+        )
+        [\s?.!]*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
 @dataclass
 class ClarificationReply:
     """What a reply to an open clarification resolved to."""
@@ -70,6 +90,20 @@ def is_small_talk(message: str) -> bool:
     if "?" in text:
         return False
     return bool(_GREETING.match(text) or _THANKS.match(text))
+
+
+def is_about_the_assistant(message: str) -> bool:
+    """True for a message that only asks who the assistant is.
+
+    Strict in the same way as is_small_talk: the whole message has to be the question, so
+    "who are you and how many customers are there?" still goes on to be read as a request
+    with a data question in it. A question like this has nothing to look up, and left to the
+    model it was once answered with a query that selected its own name as a literal.
+    """
+    text = (message or "").strip()
+    if not text or len(text) > 80:
+        return False
+    return bool(_ABOUT_THE_ASSISTANT.match(text))
 
 
 def resolve_clarification_reply(message: str, pending: Clarification) -> ClarificationReply:

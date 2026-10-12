@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Chinhook · Chat with your database</title>
   <meta name="description" content="Ask your PostgreSQL or MySQL database questions in plain language. Every answer shows the SQL behind it.">
-  <meta name="theme-color" content="#ffffff">
-  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#0B1033">
+  <link rel="icon" href="/static/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="stylesheet" href="/assets/app.css">
   <script type="module" src="/assets/app.js"></script>
 </head>
 <body>
 
-<div id="boot" class="boot" aria-label="Loading"><img src="/static/icon.svg" alt="" class="boot-mark"></div>
+<div id="boot" class="boot" aria-label="Loading"><img src="/static/icon.png" alt="" class="boot-mark"></div>
 
 <!-- ============ Something is wrong with the deployment ============ -->
 <main id="view-fatal" class="view view-center" hidden>
   <div class="card card-narrow">
-    <img src="/static/logo.svg" alt="Chinhook" class="logo">
+    <img src="/static/logo.png" alt="Hook" class="logo">
     <h1 class="title">Chinhook is unavailable</h1>
     <p class="lead" id="fatal-message">This deployment could not start.</p>
     <details class="disclosure"><summary>Technical detail</summary><pre class="pre" id="fatal-detail"></pre></details>
@@ -27,7 +28,7 @@
 <!-- ============ Sign in ============ -->
 <main id="view-auth" class="view view-center" hidden>
   <form id="auth-form" class="card card-narrow" autocomplete="off">
-    <img src="/static/logo.svg" alt="Chinhook" class="logo">
+    <img src="/static/logo.png" alt="Hook" class="logo">
     <h1 class="title">Sign in</h1>
     <p class="lead">This deployment is protected. Enter the passphrase to continue.</p>
     <label class="field">
@@ -43,11 +44,11 @@
 <main id="view-setup" class="view view-setup" hidden>
   <div class="setup">
     <header class="setup-head">
-      <img src="/static/logo.svg" alt="Chinhook" class="logo">
+      <img src="/static/logo.png" alt="Hook" class="logo">
       <h1 class="title title-xl">Connect your database</h1>
       <p class="lead">Ask your PostgreSQL or MySQL database questions in plain language, using any OpenAI-compatible model you choose.</p>
       <ul class="trust">
-        <li><span data-icon="shield"></span>Read-only, enforced by the database</li>
+        <li><button type="button" class="trust-link" data-open-safety><span data-icon="shield"></span>Read-only, enforced by the database<span data-icon="info"></span></button></li>
         <li><span data-icon="lock"></span>Credentials held for this session only</li>
         <li><span data-icon="code"></span>The SQL behind every answer</li>
       </ul>
@@ -121,12 +122,6 @@
             <span class="hint" data-ssl-hint>Encrypt when the server supports it.</span>
           </label>
         </div>
-
-        <details class="disclosure">
-          <summary>Use a login that can only read <span class="badge">Recommended</span></summary>
-          <p class="muted small">Every connection this app opens is read-only at the database itself, whatever the login is allowed to do. A login that can only read is still the safest thing to give it:</p>
-          <div class="code-block"><pre><code data-readonly-sql></code></pre><button type="button" class="icon-btn copy" data-copy-from="[data-readonly-sql]" aria-label="Copy"><span data-icon="copy"></span></button></div>
-        </details>
       </section>
 
       <section class="card step">
@@ -176,7 +171,7 @@
 <!-- ============ Preparing the index ============ -->
 <main id="view-prepare" class="view view-center" hidden>
   <div class="card card-narrow prepare">
-    <img src="/static/logo.svg" alt="Chinhook" class="logo">
+    <img src="/static/logo.png" alt="Hook" class="logo">
     <h1 class="title" data-prepare-title>Preparing your database</h1>
     <p class="lead">Each table is read, described in one sentence by your model, and indexed so a question can find the tables it needs. This happens the first time; reconnecting later reuses it.</p>
     <div data-prepare-progress>
@@ -198,7 +193,7 @@
 <div id="view-app" class="view app" hidden>
   <aside class="sidebar" id="sidebar" aria-label="Sidebar">
     <div class="sidebar-top">
-      <img src="/static/logo.svg" alt="Chinhook" class="logo logo-sm">
+      <img src="/static/logo.png" alt="Hook" class="logo logo-sm">
       <button type="button" class="icon-btn only-mobile" data-close-sidebar aria-label="Close menu"><span data-icon="x"></span></button>
     </div>
 
@@ -228,7 +223,7 @@
   <div class="main">
     <header class="topbar">
       <button type="button" class="icon-btn" data-open-sidebar aria-label="Open menu"><span data-icon="menu"></span></button>
-      <img src="/static/logo.svg" alt="Chinhook" class="logo logo-sm">
+      <img src="/static/logo.png" alt="Hook" class="logo logo-sm">
       <button type="button" class="icon-btn" data-new-chat aria-label="New chat"><span data-icon="edit"></span></button>
     </header>
 
@@ -236,7 +231,7 @@
       <div class="chat-scroll" data-chat-scroll>
         <div class="chat-column">
           <div class="empty" data-empty hidden>
-            <img src="/static/icon.svg" alt="" class="empty-mark">
+            <img src="/static/icon.png" alt="" class="empty-mark">
             <h1 class="title title-xl">What would you like to know?</h1>
             <p class="lead">Ask about <strong data-db-name></strong> in plain language. Every answer runs read-only and shows the SQL behind it.</p>
             <div class="suggestions" data-suggestions></div>
@@ -326,6 +321,24 @@
       <span class="hint">Made for this download only: the server keeps no copy.</span>
       <button type="button" class="btn btn-primary" data-export-create><span data-icon="download"></span>Download file</button>
     </footer>
+  </form>
+</dialog>
+
+<dialog id="dlg-safety" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <header class="dialog-head">
+      <h2>How your data stays safe</h2>
+      <button type="submit" value="cancel" class="icon-btn" aria-label="Close"><span data-icon="x"></span></button>
+    </header>
+    <ul class="facts">
+      <li><span data-icon="shield"></span><div><strong>Read-only at the database</strong><p>Every connection Chinhook opens is a read-only session, so a write fails at the database itself, whatever the login is allowed to do.</p></div></li>
+      <li><span data-icon="code"></span><div><strong>One checked query at a time</strong><p>Only a single SELECT is run, checked before it runs, with a 10-second time limit and at most 500 rows returned.</p></div></li>
+      <li><span data-icon="lock"></span><div><strong>Credentials stay in memory</strong><p>Your connection details are held for this session only. They are never written to disk or logged.</p></div></li>
+    </ul>
+    <div class="safety-tip">
+      <p class="small"><strong>Optional:</strong> <span class="muted">for an extra layer, connect with a login that can only read. For <span data-safety-dialect>PostgreSQL</span>:</span></p>
+      <div class="code-block"><pre><code data-readonly-sql></code></pre><button type="button" class="icon-btn copy" data-copy-from="[data-readonly-sql]" aria-label="Copy"><span data-icon="copy"></span></button></div>
+    </div>
   </form>
 </dialog>
 

@@ -136,6 +136,22 @@ def mentions_table_word(text: str) -> list[str]:
     return found
 
 
+def mentions_table_name(text: str) -> bool:
+    """Whether a message names a table by the table's own name, not only by a column word.
+
+    mentions_table_word also matches column words, which is right for finding the table a
+    question is about, but a word like "name" is a column of many tables and also an ordinary
+    word: "what is your name?" names no table at all.
+    """
+    names: set[str] = set()
+    for table in catalog():
+        lowered = table.lower()
+        names.update({lowered, _singular(lowered)})
+        names.update(p.lower() for p in re.split(r"[^A-Za-z0-9]+", table) if p)
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return any(word in names or _singular(word) in names for word in words)
+
+
 def catalog_text() -> str:
     """The same information as one compact block of text for a prompt."""
     return "\n".join(

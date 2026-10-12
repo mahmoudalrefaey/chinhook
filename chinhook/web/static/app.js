@@ -50,6 +50,7 @@ const ICONS = {
     code: '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
     alert: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
     edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
     chart: '<path d="M3 3v18h18"/><path d="M8 17V9M13 17V5M18 17v-6"/>',
     help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
@@ -301,7 +302,6 @@ function applySetupVisibility() {
         ? "postgresql://user:password@host:5432/database"
         : "mysql://user:password@host:3306/database";
     $("[data-placeholder-port]", setupForm).placeholder = postgres ? "5432" : "3306";
-    if (state?.setup) $("[data-readonly-sql]", setupForm).textContent = state.setup.read_only_sql[dialect];
     $("[data-ssl-hint]", setupForm).textContent = SSL_HINTS[setupForm.ssl_mode.value] || "";
 }
 
@@ -416,6 +416,15 @@ async function connect(values) {
         errorBox.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 }
+
+// What keeps a connection safe, with the SQL for a read-only login in the dialect picked.
+const safetyDialog = $("#dlg-safety");
+$("[data-open-safety]").addEventListener("click", () => {
+    const dialect = segmentedValue("dialect") || "postgresql";
+    $("[data-safety-dialect]", safetyDialog).textContent = dialect === "mysql" ? "MySQL" : "PostgreSQL";
+    $("[data-readonly-sql]", safetyDialog).textContent = state.setup.read_only_sql[dialect];
+    safetyDialog.showModal();
+});
 
 // Show and hide for every password field on the page.
 document.addEventListener("click", (event) => {
@@ -841,7 +850,7 @@ function userNode(text) {
 
 function botShell(...children) {
     return h("div", { class: "msg msg-bot" },
-        h("img", { class: "avatar", src: "/static/icon.svg", alt: "" }),
+        h("img", { class: "avatar", src: "/static/icon.png", alt: "" }),
         h("div", { class: "msg-body" }, ...children));
 }
 
@@ -1038,7 +1047,7 @@ function sqlPanel(details) {
     return h("div", { class: "tab-panel" },
         codeBlock(details.sql),
         details.tables.length ? h("div", {},
-            h("div", { class: "panel-label", text: "Tables used" }),
+            h("div", { class: "panel-label", text: "Tables retrieved" }),
             h("div", { class: "tags" }, details.tables.map((name) => h("span", { class: "tag", text: name })))) : null);
 }
 

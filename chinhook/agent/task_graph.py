@@ -298,10 +298,19 @@ def node_check_and_run(state: TaskGraphState) -> dict:
             problem = f"the query could not be parsed: {exc}"
 
     if problem is None:
-        unknown = [t for t in verification.tables_in(tree) if not _is_known_table(t)]
+        read = verification.tables_in(tree)
+        unknown = [t for t in read if not _is_known_table(t)]
         if unknown:
             problem = f"the query reads {', '.join(unknown)}, which this database does not have"
             task.failure_kind = "unsupported"
+        elif not read:
+            # A query with no table in it can only return values written into the query
+            # itself. Run and reported, that was a made-up answer presented as data: asked its
+            # name, a model once selected the literal 'ChatGPT' and it came back verified.
+            problem = (
+                "the query reads no table, so its result would not come from the database; "
+                "read the tables that hold the answer"
+            )
 
     if problem:
         if not task.failure_kind:

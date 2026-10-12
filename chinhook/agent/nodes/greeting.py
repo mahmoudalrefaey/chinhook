@@ -12,7 +12,7 @@ to what the assistant can do rather than replying to what was said.
 
 from chinhook.agent import llm
 from chinhook.agent.nodes.common import _trace, _usage
-from chinhook.agent.nodes.prompts import _GREETING_SYSTEM
+from chinhook.agent.nodes.prompts import _GREETING_SYSTEM, identity
 from chinhook.agent.state import GraphState, TokenUsage
 
 
@@ -38,7 +38,7 @@ def node_greeting(state: GraphState) -> dict:
         material.append("This is the first message of the conversation.")
 
     text, spent = llm.chat_text(
-        model, _GREETING_SYSTEM, "\n\n".join(material), max_completion_tokens=150
+        model, identity(model) + _GREETING_SYSTEM, "\n\n".join(material), max_completion_tokens=150
     )
     text = (text or "").strip()
     if not text:

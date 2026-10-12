@@ -6,7 +6,8 @@ from chinhook.agent.state import GraphState
 
 
 def node_route(state: GraphState) -> dict:
-    """Greeting, a reply to an open clarification, or an ordinary question.
+    """Greeting (or a question about the assistant), a reply to an open clarification, or an
+    ordinary question.
 
     The only routes that skip node_understand entirely. Everything else, including a
     question about the conversation or about the assistant, goes there: it has the schema,
@@ -17,7 +18,7 @@ def node_route(state: GraphState) -> dict:
     question = state["question"]
     raw = state.get("raw_question") or question
 
-    if router.is_small_talk(raw):
+    if router.is_small_talk(raw) or router.is_about_the_assistant(raw):
         if session.pending_clarification is not None:
             # The user said something like "thanks" or "never mind" instead of answering.
             # Without this, the question that was open stays open and silently intercepts

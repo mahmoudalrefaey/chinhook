@@ -20,7 +20,7 @@ that shows exactly how it was produced.
 <a href="SECURITY.md">Security</a>
 </p>
 
-<a href="https://chinhook.vercel.app"><img alt="Live app" src="https://img.shields.io/badge/Live%20app-chinhook.vercel.app-B11813?style=for-the-badge&"></a>
+<a href="https://chinhook.vercel.app"><img alt="Live app" src="https://img.shields.io/badge/Live%20app-chinhook.vercel.app-654EFD?style=for-the-badge"></a>
 <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white">
 <img alt="FastAPI" src="https://img.shields.io/badge/Server-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white">
 <img alt="LangGraph" src="https://img.shields.io/badge/Agent-LangGraph-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white">
@@ -129,21 +129,21 @@ Credentials live in your browser session only. The index of your schema expires 
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="static/screenshots/welcome.png" alt="The chat page before the first question, with the five-step pipeline and suggested questions">
-<p align="center"><b>Start</b>: the pipeline every question goes through, and questions to try</p>
+<img src="static/screenshots/welcome.png" alt="The chat page before the first question, with suggested questions to try">
+<p align="center"><b>Start</b>: ask in plain language, or pick a suggested question</p>
 </td>
 <td width="50%" valign="top">
-<img src="static/screenshots/details.png" alt="How this answer was produced: step timings, tables retrieved and the SQL written">
-<p align="center"><b>See how</b>: time per step, tables retrieved, the exact SQL</p>
+<img src="static/screenshots/details.png" alt="SQL and results under an answer: the exact SQL that ran and the tables retrieved for it">
+<p align="center"><b>See how</b>: the exact SQL, the rows and a chart, and every step</p>
 </td>
 </tr>
 <tr>
 <td valign="top">
-<img src="static/screenshots/clarify.png" alt="An ambiguous question answered with a choice between customers and employees">
+<img src="static/screenshots/clarify.png" alt="An ambiguous question asked back, with customers and employees offered as choices">
 <p align="center"><b>Clarify</b>: an ambiguous question is asked back once</p>
 </td>
 <td valign="top">
-<img src="static/screenshots/schema.png" alt="The schema page listing every table with approximate row counts">
+<img src="static/screenshots/schema.png" alt="The schema page: totals, a filter, and every table with its columns and approximate row count">
 <p align="center"><b>Explore</b>: every table and view, read live from the database</p>
 </td>
 </tr>
@@ -177,11 +177,11 @@ Credentials live in your browser session only. The index of your schema expires 
    - For PostgreSQL, choose the schema to answer from (`public` by default).
    - **SSL**: `prefer` encrypts when the server supports it, `require` always encrypts, and `disable` never does. An `sslmode` written in the URL itself takes precedence.
    - The database must be **reachable from the internet**, because the app connects to it from its server.
-   - A login that can only read is recommended. The setup screen shows the SQL to create one.
+   - Every query runs read-only whatever the login can do. **How your data stays safe**, linked at the top of the setup screen, explains how, and gives the SQL for a login that can only read if you want that extra layer.
 3. **Choose your model.** Pick a provider preset, or **Other** for any OpenAI-compatible base URL, then enter your API key and a model name. The model must support **tool (function) calling**. Under *Advanced*, an optional cheaper *fast model* writes the table descriptions during indexing.
 4. **Connect.** The app logs in to your database for real, checks that it can see your tables, and checks that the model answers and calls tools. If anything fails, it tells you what to change.
 5. **Wait for indexing, once.** The first time a database is connected, each table is read, your model describes it in one sentence, and the description is indexed. Reconnecting later reuses the index. **Refresh index** re-indexes only the tables that changed.
-6. **Ask.** Under every answer, **How this answer was produced** shows the pipeline, the tables, the SQL, the rows and the tasks the question became.
+6. **Ask.** Under every answer, a line gives the model, the time taken, the row count and whether the result was checked. **SQL and results** opens the rows (with a chart and a CSV download), the exact SQL, and the steps and tasks the question became.
 
 The sidebar shows what is connected and the state of the index. It also holds **New chat**, **Export configuration**, **Change connection** and, under *Your data*, **Delete this database's index**, which removes everything the server holds about your database.
 
@@ -191,17 +191,17 @@ The sidebar shows what is connected and the state of the index. It also holds **
 
 Instead of filling in the form on every visit, save the connection to a file once and load it on the next one.
 
-<img src="static/screenshots/export.png" alt="The Export configuration dialog: a passphrase, Create file, and the download" width="360" align="right">
+<img src="static/screenshots/export.png" alt="The Export configuration dialog: the passphrase, repeated, and Download file" width="360" align="right">
 
-- **Export.** Once connected, press **Export configuration** in the sidebar. Choose a passphrase of at least 10 characters to include the database password and API key, or turn that switch off to leave them out. Press **Create file**, then download `chinhook-<database>.json`.
-- **Import.** On the setup screen, open **Import a configuration file** and choose the file. Enter its passphrase (or, for a file without them, the database password and API key), then press **Load and connect**. **Load into the form** fills in the form instead, so you can check or change something before connecting.
+- **Export.** Once connected, press **Export configuration** in the sidebar. Choose a passphrase of at least 10 characters to include the database password and API key, or turn that switch off to leave them out. Press **Download file** to save `chinhook-<database>.json`.
+- **Import.** On the setup screen, press **Import it** and choose or drop the file. Enter its passphrase (or, for a file without them, the database password and API key), then press **Load and connect**. **Load into the form** fills in the form instead, so you can check or change something before connecting.
 - **What is in the file.** The database URL, schema and SSL setting, and the provider, base URL, model and fast model. With a passphrase, all of it, password and key included, is encrypted with AES-256-GCM under a key derived from the passphrase with scrypt. A wrong passphrase, or a file changed after it was exported, does not load. Without a passphrase, the password and key are not in the file at all.
 - **Nothing is kept.** The file is made in memory for your download and read in memory when you import it. The server keeps no copy, and the passphrase fields are emptied as soon as they have been used.
 
 <br clear="right">
 
 <p align="center">
-  <img src="static/screenshots/import.png" alt="Import a configuration file on the setup screen: the chosen file, its passphrase, and Load and connect" width="100%">
+  <img src="static/screenshots/import.png" alt="Import a configuration file on the setup screen: the chosen file, its passphrase, and Load and connect" width="420">
   <br><sub><b>Import</b> on the setup screen: choose the file, enter its passphrase, and connect.</sub>
 </p>
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from chinhook.agent import llm, schema as schema_store
 from chinhook.agent.nodes.common import _is_meta, _trace
-from chinhook.agent.nodes.prompts import _ANSWER_SYSTEM
+from chinhook.agent.nodes.prompts import _ANSWER_SYSTEM, identity
 from chinhook.agent.state import GraphState, TaskState, TokenUsage
 
 
@@ -181,7 +181,7 @@ def node_answer(state: GraphState) -> dict:
         # readable by whoever is looking after this.
         detail = _failure_blocks(failed)
         text, spent = llm.chat_stream(
-            model, _ANSWER_SYSTEM, detail, on_token=on_token, max_completion_tokens=600
+            model, identity(model) + _ANSWER_SYSTEM, detail, on_token=on_token, max_completion_tokens=600
         )
         usage.add(spent)
         text = (text or "").strip()
@@ -299,7 +299,7 @@ def node_answer(state: GraphState) -> dict:
     # own table no longer counts against this: table_supplied_separately keeps the model
     # from having to write it at all.
     text, spent = llm.chat_stream(
-        model, _ANSWER_SYSTEM, "\n\n".join(blocks), on_token=on_token, max_completion_tokens=2000
+        model, identity(model) + _ANSWER_SYSTEM, "\n\n".join(blocks), on_token=on_token, max_completion_tokens=2000
     )
     usage.add(spent)
 

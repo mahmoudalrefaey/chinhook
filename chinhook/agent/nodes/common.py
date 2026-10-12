@@ -1,6 +1,7 @@
 """What every node needs: the stage labels, the small state helpers, and the
 shapes a task is built from."""
 
+import re
 from typing import Any
 
 from chinhook.agent import schema as schema_store, verify as verification
@@ -38,6 +39,9 @@ _INTENT_ROW_KIND = {
     "other": "rows",
     "meta": "rows",
 }
+
+# Words that address the assistant itself rather than anything in the data.
+_ASSISTANT_WORDS = {"you", "your", "yours", "yourself", "assistant", "chinhook"}
 
 
 # ---------- small helpers ----------
@@ -90,7 +94,14 @@ def _looks_like_a_data_task(
     """
     if entities or filters or metrics:
         return True
-    return bool(schema_store.mentions_table_word(question))
+    if not schema_store.mentions_table_word(question):
+        return False
+    # A question to the assistant about itself can share a word with a column: "what is your
+    # name?" matched the name column of a table, was run as a query, and the model answered
+    # it by selecting a name of its own invention. Addressed to the assistant and naming no
+    # table outright, it stays a question about the assistant.
+    addressed = set(re.findall(r"[a-z]+", question.lower())) & _ASSISTANT_WORDS
+    return not (addressed and not schema_store.mentions_table_name(question))
 
 
 def _task_from_spec(spec: dict[str, Any], index: int, raw: str) -> TaskState:
