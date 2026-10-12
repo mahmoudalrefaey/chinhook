@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Chinhook · Chat with your database</title>
+  <meta name="description" content="Ask your PostgreSQL or MySQL database questions in plain language. Every answer shows the SQL behind it.">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+
+<div id="boot" class="boot" aria-label="Loading"><img src="/static/icon.svg" alt="" class="boot-mark"></div>
+
+<!-- ============ Something is wrong with the deployment ============ -->
+<main id="view-fatal" class="view view-center" hidden>
+  <div class="card card-narrow">
+    <img src="/static/logo.svg" alt="Chinhook" class="logo">
+    <h1 class="title">Chinhook is unavailable</h1>
+    <p class="lead" id="fatal-message">This deployment could not start.</p>
+    <details class="disclosure"><summary>Technical detail</summary><pre class="pre" id="fatal-detail"></pre></details>
+  </div>
+</main>
+
+<!-- ============ Sign in ============ -->
+<main id="view-auth" class="view view-center" hidden>
+  <form id="auth-form" class="card card-narrow" autocomplete="off">
+    <img src="/static/logo.svg" alt="Chinhook" class="logo">
+    <h1 class="title">Sign in</h1>
+    <p class="lead">This deployment is protected. Enter the passphrase to continue.</p>
+    <label class="field">
+      <span class="label">Passphrase</span>
+      <input class="input" type="password" name="passphrase" autocomplete="current-password" required>
+    </label>
+    <div class="alert alert-error" data-error hidden></div>
+    <button class="btn btn-primary btn-block btn-lg" type="submit">Continue</button>
+  </form>
+</main>
+
+<!-- ============ Setup ============ -->
+<main id="view-setup" class="view view-setup" hidden>
+  <div class="setup">
+    <header class="setup-head">
+      <img src="/static/logo.svg" alt="Chinhook" class="logo">
+      <h1 class="title title-xl">Connect your database</h1>
+      <p class="lead">Ask your PostgreSQL or MySQL database questions in plain language, using any OpenAI-compatible model you choose.</p>
+      <ul class="trust">
+        <li><span data-icon="shield"></span>Read-only, enforced by the database</li>
+        <li><span data-icon="lock"></span>Credentials held for this session only</li>
+        <li><span data-icon="code"></span>The SQL behind every answer</li>
+      </ul>
+    </header>
+
+    <button type="button" class="import-strip" id="open-import">
+      <span data-icon="upload"></span>
+      <span>Have a configuration file from a previous visit?</span>
+      <strong>Import it</strong>
+    </button>
+
+    <form id="setup-form" autocomplete="off" novalidate>
+      <section class="card step">
+        <div class="step-head">
+          <span class="step-num">1</span>
+          <div>
+            <h2 class="step-title">Database</h2>
+            <p class="step-sub">PostgreSQL or MySQL, reachable from the internet.</p>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="segmented" data-segmented="dialect" role="radiogroup" aria-label="Database type">
+            <button type="button" role="radio" data-value="postgresql">PostgreSQL</button>
+            <button type="button" role="radio" data-value="mysql">MySQL</button>
+          </div>
+          <div class="segmented segmented-quiet" data-segmented="mode" role="radiogroup" aria-label="How to enter the connection">
+            <button type="button" role="radio" data-value="url">Connection URL</button>
+            <button type="button" role="radio" data-value="fields">Separate fields</button>
+          </div>
+        </div>
+
+        <div data-when-mode="url">
+          <label class="field">
+            <span class="label">Connection URL</span>
+            <span class="secret">
+              <input class="input mono" type="password" name="url" spellcheck="false" autocomplete="off" data-placeholder-url>
+              <button type="button" class="reveal" aria-label="Show"><span data-icon="eye"></span></button>
+            </span>
+            <span class="hint">The URL your hosting provider gives you, including the user and password.</span>
+          </label>
+        </div>
+
+        <div data-when-mode="fields" hidden>
+          <div class="grid grid-host">
+            <label class="field"><span class="label">Host</span><input class="input" name="host" placeholder="db.example.com" spellcheck="false"></label>
+            <label class="field"><span class="label">Port</span><input class="input" name="port" inputmode="numeric" data-placeholder-port></label>
+          </div>
+          <label class="field"><span class="label">Database name</span><input class="input" name="database" spellcheck="false"></label>
+          <div class="grid grid-2">
+            <label class="field"><span class="label">User</span><input class="input" name="username" spellcheck="false" autocomplete="off"></label>
+            <label class="field">
+              <span class="label">Password</span>
+              <span class="secret">
+                <input class="input" type="password" name="password" autocomplete="new-password">
+                <button type="button" class="reveal" aria-label="Show"><span data-icon="eye"></span></button>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <label class="field" data-when-dialect="postgresql">
+            <span class="label">Schema</span>
+            <input class="input" name="schema" value="public" spellcheck="false">
+            <span class="hint">Questions are answered from this schema's tables and views.</span>
+          </label>
+          <label class="field">
+            <span class="label">SSL</span>
+            <select class="input" name="ssl_mode"></select>
+            <span class="hint" data-ssl-hint>Encrypt when the server supports it.</span>
+          </label>
+        </div>
+
+        <details class="disclosure">
+          <summary>Use a login that can only read <span class="badge">Recommended</span></summary>
+          <p class="muted small">Every connection this app opens is read-only at the database itself, whatever the login is allowed to do. A login that can only read is still the safest thing to give it:</p>
+          <div class="code-block"><pre><code data-readonly-sql></code></pre><button type="button" class="icon-btn copy" data-copy-from="[data-readonly-sql]" aria-label="Copy"><span data-icon="copy"></span></button></div>
+        </details>
+      </section>
+
+      <section class="card step">
+        <div class="step-head">
+          <span class="step-num">2</span>
+          <div>
+            <h2 class="step-title">Model</h2>
+            <p class="step-sub">Any OpenAI-compatible endpoint whose model supports tool calling.</p>
+          </div>
+        </div>
+
+        <div class="grid grid-2">
+          <label class="field"><span class="label">Provider</span><select class="input" name="provider"></select></label>
+          <label class="field"><span class="label">Model</span><input class="input" name="model" placeholder="e.g. gpt-4.1-mini" spellcheck="false"></label>
+        </div>
+        <label class="field">
+          <span class="label">Base URL</span>
+          <input class="input mono" name="base_url" spellcheck="false" placeholder="https://…/v1">
+        </label>
+        <label class="field">
+          <span class="label">API key</span>
+          <span class="secret">
+            <input class="input mono" type="password" name="api_key" autocomplete="off" spellcheck="false">
+            <button type="button" class="reveal" aria-label="Show"><span data-icon="eye"></span></button>
+          </span>
+        </label>
+        <details class="disclosure">
+          <summary>Advanced</summary>
+          <label class="field">
+            <span class="label">Fast model <span class="optional">optional</span></span>
+            <input class="input" name="fast_model" spellcheck="false">
+            <span class="hint">A cheaper model for the one-line description of each table written while indexing. Leave empty to use the model above for everything.</span>
+          </label>
+        </details>
+      </section>
+
+      <div class="connect-panel">
+        <ol class="checklist" data-steps hidden></ol>
+        <div class="alert alert-error" data-error hidden></div>
+        <button class="btn btn-primary btn-lg btn-block" type="submit" data-connect>Connect</button>
+        <p class="fineprint">What you enter is held in this server's memory for this session only, never written to disk, and forgotten when the session ends.</p>
+      </div>
+    </form>
+  </div>
+</main>
+
+<!-- ============ Preparing the index ============ -->
+<main id="view-prepare" class="view view-center" hidden>
+  <div class="card card-narrow prepare">
+    <img src="/static/logo.svg" alt="Chinhook" class="logo">
+    <h1 class="title" data-prepare-title>Preparing your database</h1>
+    <p class="lead">Each table is read, described in one sentence by your model, and indexed so a question can find the tables it needs. This happens the first time; reconnecting later reuses it.</p>
+    <div data-prepare-progress>
+      <div class="progress"><div class="progress-bar" data-bar></div></div>
+      <div class="progress-meta"><span data-message>Checking the index</span><span data-count></span></div>
+    </div>
+    <div data-prepare-error hidden>
+      <div class="alert alert-error"><strong>The database could not be indexed.</strong><span data-error-message></span></div>
+      <details class="disclosure"><summary>Technical detail</summary><pre class="pre" data-error-detail></pre></details>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-retry>Try again</button>
+        <button type="button" class="btn btn-secondary" data-change>Change connection</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ The app: chat and schema ============ -->
+<div id="view-app" class="view app" hidden>
+  <aside class="sidebar" id="sidebar" aria-label="Sidebar">
+    <div class="sidebar-top">
+      <img src="/static/logo.svg" alt="Chinhook" class="logo logo-sm">
+      <button type="button" class="icon-btn only-mobile" data-close-sidebar aria-label="Close menu"><span data-icon="x"></span></button>
+    </div>
+
+    <button type="button" class="btn btn-secondary btn-block btn-new" data-new-chat><span data-icon="edit"></span>New chat</button>
+
+    <nav class="nav">
+      <a href="#/" data-route="chat"><span data-icon="message"></span>Chat</a>
+      <a href="#/schema" data-route="schema"><span data-icon="table"></span>Schema</a>
+    </nav>
+
+    <div class="side-section">
+      <div class="side-label">Connection</div>
+      <div class="conn-card" data-conn></div>
+    </div>
+
+    <div class="menu">
+      <button type="button" class="menu-item" data-refresh-index><span data-icon="refresh"></span>Refresh index</button>
+      <button type="button" class="menu-item" data-open-export><span data-icon="download"></span>Export configuration</button>
+      <button type="button" class="menu-item" data-open-data><span data-icon="shield"></span>Your data</button>
+      <button type="button" class="menu-item" data-disconnect><span data-icon="logout"></span>Change connection</button>
+    </div>
+
+    <div class="sidebar-foot">Supported and sponsored by GBG&nbsp;Global&nbsp;Brands&nbsp;Group</div>
+  </aside>
+  <div class="scrim" data-scrim hidden></div>
+
+  <div class="main">
+    <header class="topbar">
+      <button type="button" class="icon-btn" data-open-sidebar aria-label="Open menu"><span data-icon="menu"></span></button>
+      <img src="/static/logo.svg" alt="Chinhook" class="logo logo-sm">
+      <button type="button" class="icon-btn" data-new-chat aria-label="New chat"><span data-icon="edit"></span></button>
+    </header>
+
+    <section class="page page-chat" data-page="chat">
+      <div class="chat-scroll" data-chat-scroll>
+        <div class="chat-column">
+          <div class="empty" data-empty hidden>
+            <img src="/static/icon.svg" alt="" class="empty-mark">
+            <h1 class="title title-xl">What would you like to know?</h1>
+            <p class="lead">Ask about <strong data-db-name></strong> in plain language. Every answer runs read-only and shows the SQL behind it.</p>
+            <div class="suggestions" data-suggestions></div>
+          </div>
+          <div class="messages" data-messages aria-live="polite"></div>
+        </div>
+      </div>
+      <div class="composer-dock">
+        <form class="composer" data-composer>
+          <textarea rows="1" name="question" placeholder="Ask a question about your data" aria-label="Your question" maxlength="4000"></textarea>
+          <button type="submit" class="send" aria-label="Send" disabled><span data-icon="arrow-up"></span></button>
+        </form>
+        <p class="disclaimer">Answers are written by AI from your data and can be wrong. Check the SQL behind each one.</p>
+      </div>
+    </section>
+
+    <section class="page page-schema" data-page="schema" hidden>
+      <div class="schema-column">
+        <header class="page-head">
+          <div>
+            <h1 class="title">Schema</h1>
+            <p class="lead">Read from the database itself: exactly what the model can be shown. Row counts come from the database's statistics and are approximate.</p>
+          </div>
+        </header>
+        <div class="stats" data-schema-stats></div>
+        <label class="search">
+          <span data-icon="search"></span>
+          <input class="input" type="search" placeholder="Filter tables and columns" data-schema-filter aria-label="Filter tables and columns">
+        </label>
+        <div class="table-list" data-schema-list></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ============ Dialogs ============ -->
+<dialog id="dlg-import" class="dialog">
+  <form method="dialog" class="dialog-body" data-import-form autocomplete="off">
+    <header class="dialog-head">
+      <h2>Import a configuration file</h2>
+      <button type="submit" value="cancel" class="icon-btn" aria-label="Close" formnovalidate><span data-icon="x"></span></button>
+    </header>
+    <p class="muted small">Load a file saved with <em>Export configuration</em> instead of filling in the form. It is read for this session only, and not kept.</p>
+    <label class="dropzone">
+      <input type="file" accept=".json,application/json" data-import-file>
+      <span data-icon="upload"></span>
+      <span data-import-name>Choose a file</span>
+    </label>
+    <div data-import-unlock hidden>
+      <p class="small" data-import-label></p>
+      <div data-import-encrypted hidden>
+        <label class="field"><span class="label">Passphrase</span><input class="input" type="password" name="passphrase" autocomplete="off"><span class="hint">The passphrase chosen when this file was exported.</span></label>
+      </div>
+      <div class="grid grid-2" data-import-plain hidden>
+        <label class="field"><span class="label">Database password</span><input class="input" type="password" name="password" autocomplete="off"></label>
+        <label class="field"><span class="label">API key</span><input class="input" type="password" name="api_key" autocomplete="off"></label>
+      </div>
+    </div>
+    <div class="alert alert-error" data-error hidden></div>
+    <footer class="dialog-foot">
+      <button type="button" class="btn btn-secondary" data-import-fill disabled>Load into the form</button>
+      <button type="button" class="btn btn-primary" data-import-connect disabled>Load and connect</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="dlg-export" class="dialog">
+  <form method="dialog" class="dialog-body" data-export-form autocomplete="off">
+    <header class="dialog-head">
+      <h2>Export configuration</h2>
+      <button type="submit" value="cancel" class="icon-btn" aria-label="Close" formnovalidate><span data-icon="x"></span></button>
+    </header>
+    <p class="muted small" data-export-intro></p>
+    <label class="switch">
+      <input type="checkbox" name="include_secrets" checked>
+      <span class="switch-track"></span>
+      <span>Include the database password and API key</span>
+    </label>
+    <div data-export-secret>
+      <label class="field"><span class="label">Passphrase</span><input class="input" type="password" name="passphrase" autocomplete="new-password"><span class="hint" data-passphrase-hint></span></label>
+      <label class="field"><span class="label">Repeat the passphrase</span><input class="input" type="password" name="passphrase_again" autocomplete="new-password"></label>
+      <p class="hint">The password and API key are encrypted with this passphrase (scrypt and AES-256-GCM). Without it, the file is of no use to anyone who finds it.</p>
+    </div>
+    <p class="hint" data-export-plain hidden>The file says where the database and the model are, but holds no password or API key: you enter those when you import it.</p>
+    <div class="alert alert-error" data-error hidden></div>
+    <footer class="dialog-foot">
+      <span class="hint">Made for this download only: the server keeps no copy.</span>
+      <button type="button" class="btn btn-primary" data-export-create><span data-icon="download"></span>Download file</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="dlg-data" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <header class="dialog-head">
+      <h2>Your data</h2>
+      <button type="submit" value="cancel" class="icon-btn" aria-label="Close"><span data-icon="x"></span></button>
+    </header>
+    <ul class="facts">
+      <li><span data-icon="lock"></span><div><strong>Connection details</strong><p>Held in this server's memory for this session only. Never written to disk, never logged.</p></div></li>
+      <li><span data-icon="shield"></span><div><strong>Queries</strong><p>Every query runs in a read-only session, so a write fails at the database itself.</p></div></li>
+      <li><span data-icon="database"></span><div><strong>Search index</strong><p data-retention></p></div></li>
+    </ul>
+    <div class="alert alert-error" data-error hidden></div>
+    <footer class="dialog-foot">
+      <button type="button" class="btn btn-danger" data-delete-index><span data-icon="trash"></span>Delete this database's index</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="dlg-confirm" class="dialog dialog-sm">
+  <form method="dialog" class="dialog-body">
+    <h2 data-confirm-title></h2>
+    <p class="muted small" data-confirm-text></p>
+    <footer class="dialog-foot">
+      <button value="cancel" class="btn btn-secondary">Cancel</button>
+      <button value="ok" class="btn btn-primary" data-confirm-ok>Continue</button>
+    </footer>
+  </form>
+</dialog>
+
+<div class="toasts" data-toasts role="status" aria-live="polite"></div>
+</body>
+</html>

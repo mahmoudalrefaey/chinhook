@@ -7,8 +7,8 @@ embedding model runs in-process, the limits) are a different thing and live in
 chinhook/config.py.
 
 The rest of the code reaches the current connection through current(), rather than having it
-passed into every function that eventually needs it. The web page sets it with use() around
-each call it makes, and LangGraph copies the context into the threads it runs parallel tasks
+passed into every function that eventually needs it. The web API (chinhook/web/api.py) sets
+it with use() around each call it makes, and LangGraph copies the context into the threads it runs parallel tasks
 on (langgraph/pregel/_executor.py calls copy_context for every task it submits), so a task
 running on a worker thread still sees the connection of the session that asked the question
 and never another session's.
@@ -120,17 +120,6 @@ def current() -> Runtime:
     if runtime is None:
         raise NotConnected("No database and model are connected in this session yet.")
     return runtime
-
-
-def activate(runtime: Runtime | None) -> None:
-    """Make runtime the current connection for the rest of this thread's current context.
-
-    For the web page, which calls this once at the top of every script run: Streamlit runs
-    each session's script on that session's own thread, so this reaches exactly the calls
-    that one run makes, and a run with nothing connected yet passes None so it can never
-    inherit anything.
-    """
-    _current.set(runtime)
 
 
 @contextlib.contextmanager

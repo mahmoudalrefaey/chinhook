@@ -8,8 +8,8 @@
     rate_limit     per-session and global question limits
     agent/         the LangGraph workflow that turns a question into checked SQL and an answer
     db/            database access, the vector index, and read-only SQL execution
-    ui/            rendering helpers and the page's styles
+    web/           the web server, its JSON API, sessions, and the page (HTML, CSS, JS)
 
-The Streamlit page itself is app.py at the repository root, next to static/, which is where
-Streamlit serves static files from.
+Run it with: uvicorn chinhook.web.server:app. The brand images it serves at /static live in
+static/ at the repository root.
 """

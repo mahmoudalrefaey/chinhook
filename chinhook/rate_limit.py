@@ -4,8 +4,8 @@ Every visitor pays for their own model calls with their own key, but every quest
 costs this server real work: embeddings, database connections, a slot in the agent's thread
 pool. On a public link with no other access control, one session asking in a tight loop would
 slow the app down for everyone else, which is what these limits prevent. Framework agnostic
-on purpose, so it is testable without Streamlit running at all: app.py holds one bucket per
-session in st.session_state and calls check() with it.
+on purpose, so it is testable without a web server running at all: each session in
+chinhook/web/sessions.py holds its own bucket, and chinhook/web/api.py calls check() with it.
 """
 
 from __future__ import annotations

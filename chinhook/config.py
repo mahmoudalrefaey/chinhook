@@ -51,3 +51,12 @@ MAX_CONCURRENT_INDEX_JOBS = _int("MAX_CONCURRENT_INDEX_JOBS", 2)
 APP_PASSPHRASE = os.getenv("APP_PASSPHRASE") or None
 RATE_LIMIT_PER_SESSION_PER_MINUTE = _int("RATE_LIMIT_PER_SESSION_PER_MINUTE", 10)
 RATE_LIMIT_GLOBAL_PER_MINUTE = _int("RATE_LIMIT_GLOBAL_PER_MINUTE", 120)
+
+# ---------- Sessions ----------
+# A visitor's connection details live in this server's memory for as long as their session
+# does, and nowhere else. A session nobody has used for this long is forgotten, secrets and
+# chat included; closing the tab forgets it from the browser's side straight away.
+SESSION_IDLE_MINUTES = _int("SESSION_IDLE_MINUTES", 60)
+# How many sessions one server holds at once. Past this the longest-idle ones are dropped
+# first, so memory stays bounded however many visitors arrive.
+MAX_SESSIONS = _int("MAX_SESSIONS", 500)

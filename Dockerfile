@@ -40,9 +40,11 @@ USER appuser
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD curl -fsS "http://localhost:${PORT:-8501}/_stcore/health" || exit 1
+    CMD curl -fsS "http://localhost:${PORT:-8501}/healthz" || exit 1
 
 # tini as PID 1 rather than the shell directly: it forwards signals and reaps anything left
 # orphaned, neither of which a plain shell does.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["sh", "-c", "exec /app/.venv/bin/streamlit run app.py --server.port \"${PORT:-8501}\" --server.address 0.0.0.0 --server.headless true"]
+# One process on purpose: each visitor's session lives in its memory (chinhook/web/sessions.py).
+# --proxy-headers so the client address and scheme are taken from the platform's proxy.
+CMD ["sh", "-c", "exec /app/.venv/bin/uvicorn chinhook.web.server:app --host 0.0.0.0 --port \"${PORT:-8501}\" --proxy-headers --forwarded-allow-ips='*'"]

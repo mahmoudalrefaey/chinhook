@@ -20,9 +20,9 @@ that shows exactly how it was produced.
 <a href="SECURITY.md">Security</a>
 </p>
 
-<a href="https://chinhook.vercel.app"><img alt="Live app" src="https://img.shields.io/badge/Live%20app-chinhook.vercel.app-B11813?style=for-the-badge&logo=streamlit&logoColor=white"></a>
+<a href="https://chinhook.vercel.app"><img alt="Live app" src="https://img.shields.io/badge/Live%20app-chinhook.vercel.app-B11813?style=for-the-badge&"></a>
 <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white">
-<img alt="Streamlit" src="https://img.shields.io/badge/UI-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white">
+<img alt="FastAPI" src="https://img.shields.io/badge/Server-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white">
 <img alt="LangGraph" src="https://img.shields.io/badge/Agent-LangGraph-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white">
 <br>
 <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
@@ -157,7 +157,7 @@ Credentials live in your browser session only. The index of your schema expires 
 
 - The chat input stays pinned to the bottom of the screen, and each new answer scrolls into view as it streams in.
 - Chat and Schema are separate pages in the sidebar, so switching between them keeps your conversation.
-- If the connection drops (Wi-Fi blips, a laptop sleeps), you have **five minutes** to come back to the same session, with your connection settings and chat intact.
+- Reloading the page, or a dropped connection (Wi-Fi blips, a laptop sleeps), picks up the same session with your connection settings and chat intact. A session left unused for an hour is forgotten.
 
 </td>
 <td width="38%" align="center">
@@ -217,7 +217,7 @@ Instead of filling in the form on every visit, save the connection to a file onc
 
 | What | Where it goes | How long |
 |---|---|---|
-| Your database URL, login and password, and your model API key | The server's memory, for your browser session only | Until you close the tab or change the connection. A dropped connection is held for five minutes so it can resume. Never written to disk, a database or the page URL |
+| Your database URL, login and password, and your model API key | The server's memory, for your browser session only | Until you close the tab, change the connection, or leave the session unused for an hour. Never written to disk, a database or the page URL |
 | Your database | Read by read-only queries only. Nothing is ever written to it | n/a |
 | The index: table and column names, a one-line description of each table, and common values of category-like columns (countries, statuses, genres) | The deployment's Qdrant | Deleted after 7 days without use, or immediately with **Delete this database's index** |
 | Your questions, the relevant part of your schema and the rows a query returns, plus a few sample rows per table at index time | Your model provider, through the API key you gave | As long as that provider keeps them |
@@ -270,7 +270,7 @@ flowchart TB
     U(["Browser"]) -->|"chinhook.vercel.app redirects here"| APP
 
     subgraph RAILWAY["Railway project"]
-        APP["<b>App service</b><br/>Dockerfile · Streamlit (app.py)<br/>LangGraph agent · fastembed in-process<br/>one session runtime per browser"]
+        APP["<b>App service</b><br/>Dockerfile · FastAPI (chinhook/web)<br/>LangGraph agent · fastembed in-process<br/>one session runtime per browser"]
         QD[("<b>Qdrant</b><br/>one pair of collections per database<br/>private network only")]
     end
 
@@ -327,8 +327,7 @@ Endpoint quirks are handled automatically. These include reasoning models that r
 
 ```text
 .
-├── app.py                    # The Streamlit page: setup, indexing, and the Chat and Schema pages
-├── chinhook/                 # Everything app.py calls
+├── chinhook/                 # The application
 │   ├── chat_engine.py        #   The one entry point the page uses: answer, index, schema
 │   ├── connection.py         #   Setup: reading what was typed, the public-host guard, checks
 │   ├── settings_file.py      #   Exporting and importing a connection, encrypted
@@ -356,11 +355,13 @@ Endpoint quirks are handled automatically. These include reasoning models that r
 │   │   ├── pii.py            #     Columns treated as contact details
 │   │   ├── retention.py      #     Expiring indexes nobody uses
 │   │   └── sql.py            #     SQL validation and read-only execution
-│   └── ui/
-│       ├── render.py         #     Markdown rendering and sanitising, the pipeline diagram
-│       └── styles.css        #     The page's styles
-├── static/                   # Served at app/static/: the banner and icon (screenshots are for this README only)
-├── .streamlit/config.toml    # Theme, static file serving, how long a dropped session is kept
+│   └── web/                  #   The web app
+│       ├── server.py         #     Entry point: the page, its assets, security headers
+│       ├── api.py            #     The JSON API: connect, index, ask (streamed), schema, export
+│       ├── sessions.py       #     One visitor's session, held in memory with an idle expiry
+│       ├── render.py         #     Markdown rendering and sanitising, result rows as JSON
+│       └── static/           #     The page: index.html, app.css, app.js (no build step)
+├── static/                   # Served at /static: the logo and icon (banner and screenshots are for this README only)
 ├── deploy/vercel/            # The fallback page for the Vercel redirect
 ├── vercel.json               # Makes a Vercel project a redirect to the app
 ├── Dockerfile                # The image Railway, or any Docker host, runs
@@ -506,7 +507,7 @@ Released under the [Apache License 2.0](LICENSE). © 2026 Mahmoud Muhammad Refae
 
 You may use, modify and redistribute the code, including commercially. Any copy or derivative must keep the copyright and the [NOTICE](NOTICE) file, which credits the original. The license covers the code, not the names: **"Chinhook", its icon and banner, and the GBG Global Brands Group name and logo are not licensed**. A fork or a service built on this code must use its own name and branding and must not present itself as Chinhook or as endorsed by its team or sponsor. Saying "based on Chinhook" with a link back to this repository is welcome.
 
-Chinhook is built on [Streamlit](https://streamlit.io), [LangGraph](https://github.com/langchain-ai/langgraph), [Qdrant](https://qdrant.tech), [fastembed](https://github.com/qdrant/fastembed), [sqlglot](https://github.com/tobymao/sqlglot) and [SQLAlchemy](https://www.sqlalchemy.org). The screenshots use the [Chinook sample database](https://github.com/lerocha/chinook-database).
+Chinhook is built on [FastAPI](https://fastapi.tiangolo.com), [LangGraph](https://github.com/langchain-ai/langgraph), [Qdrant](https://qdrant.tech), [fastembed](https://github.com/qdrant/fastembed), [sqlglot](https://github.com/tobymao/sqlglot) and [SQLAlchemy](https://www.sqlalchemy.org). The screenshots use the [Chinook sample database](https://github.com/lerocha/chinook-database).
 
 <br>
 
