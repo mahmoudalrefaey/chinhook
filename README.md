@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="static/banner.png" alt="Chinhook Database Chat: query your data, get real answers" width="100%">
+<img src="static\banner-ch.png" alt="Chinhook Database Chat: query your data, get real answers" width="100%">
 
 <h3>Ask your PostgreSQL or MySQL database questions in plain language.</h3>
 
