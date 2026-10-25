@@ -13,6 +13,8 @@ refuses the write.
 
 Qdrant is the deployment's own, configured once in chinhook/config.py. What differs per session
 is which collections in it are read and written: one pair per database (see tables_collection).
+Text is turned into vectors either by Qdrant Cloud itself or by fastembed in this process,
+whichever EMBED_PROVIDER says (see the embeddings section at the bottom).
 """
 
 from __future__ import annotations
@@ -21,10 +23,11 @@ import contextlib
 import hashlib
 import threading
 from collections import OrderedDict
-from typing import Iterator
+from typing import Iterator, Union
 from urllib.parse import urlsplit
 
 from qdrant_client import QdrantClient
+from qdrant_client.models import Document
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 
@@ -36,7 +39,7 @@ from chinhook.db import dialects
 if not config.QDRANT_URL:
     raise RuntimeError(
         "QDRANT_URL is not set. Set it to the address of the Qdrant this deployment uses, such "
-        "as http://qdrant.railway.internal:6333 on Railway's private network."
+        "as https://<cluster>.cloud.qdrant.io for a Qdrant Cloud cluster."
     )
 
 
@@ -58,6 +61,9 @@ qdrant = QdrantClient(
     url=config.QDRANT_URL,
     port=_qdrant_port(config.QDRANT_URL),
     api_key=config.QDRANT_API_KEY,
+    # Sends each Document (see embed) to the cluster to be embedded there, instead of looking
+    # for a local fastembed model to embed it here.
+    cloud_inference=config.EMBED_PROVIDER == "qdrant-cloud",
     timeout=30,
 )
 
@@ -177,9 +183,20 @@ def values_collection() -> str:
 
 
 # ---------- embeddings ----------
-# One model per process, loaded on first use and shared by every session: it holds no state
-# about any one of them, and ONNX Runtime inference is safe to call from several threads.
+# Whatever these return is handed to Qdrant as it is, as a point's vector or a query: never
+# read or compared here. With Qdrant Cloud Inference it is a Document, the text and the model
+# to embed it with, and the cluster does the embedding when the point is written or the query
+# runs. With fastembed it is the vector itself, computed in this process.
 
+Embedding = Union[Document, list[float]]
+
+# The vector size of the Qdrant Cloud models known here. Any other is named by EMBED_DIM.
+_CLOUD_MODEL_SIZES = {
+    "sentence-transformers/all-minilm-l6-v2": 384,
+}
+
+# One fastembed model per process, loaded on first use and shared by every session: it holds no
+# state about any one of them, and ONNX Runtime inference is safe to call from several threads.
 _embedder = None
 _embedder_lock = threading.Lock()
 
@@ -197,18 +214,32 @@ def _embedding_model():
 
 def embedding_size() -> int:
     """The vector size the configured embedding model produces."""
+    if config.EMBED_DIM:
+        return config.EMBED_DIM
+    if config.EMBED_PROVIDER == "qdrant-cloud":
+        try:
+            return _CLOUD_MODEL_SIZES[config.EMBED_MODEL.lower()]
+        except KeyError:
+            raise RuntimeError(
+                f"The vector size of {config.EMBED_MODEL} is not known here. Set EMBED_DIM to "
+                "the size shown for it in the Qdrant Cloud console's Inference tab."
+            ) from None
     from fastembed import TextEmbedding
 
     return TextEmbedding.get_embedding_size(config.EMBED_MODEL)
 
 
-def embed(text: str) -> list[float]:
+def embed(text: str) -> Embedding:
     """The embedding of a search query: a question, or one word of one."""
+    if config.EMBED_PROVIDER == "qdrant-cloud":
+        return Document(text=text, model=config.EMBED_MODEL)
     return next(iter(_embedding_model().query_embed(text))).tolist()
 
 
-def embed_batch(texts: list[str]) -> list[list[float]]:
+def embed_batch(texts: list[str]) -> list[Embedding]:
     """Embeddings for several documents being indexed, computed as one batch."""
     if not texts:
         return []
+    if config.EMBED_PROVIDER == "qdrant-cloud":
+        return [Document(text=text, model=config.EMBED_MODEL) for text in texts]
     return [vector.tolist() for vector in _embedding_model().passage_embed(texts, batch_size=64)]

@@ -2,18 +2,29 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "",
-  "buildCommand": "",
-  "outputDirectory": "deploy/vercel",
-  "redirects": [
+  "buildCommand": "rm -rf dist && mkdir -p dist/assets dist/static && cp chinhook/web/static/index.html dist/ && cp chinhook/web/static/app.css chinhook/web/static/app.js dist/assets/ && cp static/favicon.png static/apple-touch-icon.png static/icon.png static/logo.png dist/static/",
+  "outputDirectory": "dist",
+  "cleanUrls": false,
+  "trailingSlash": false,
+  "rewrites": [
     {
-      "source": "/",
-      "destination": "https://chinhook-production-e92b.up.railway.app/",
-      "permanent": false
-    },
+      "source": "/api/:path*",
+      "destination": "https://chinhook.fastapicloud.dev/api/:path*"
+    }
+  ],
+  "headers": [
     {
-      "source": "/:path*",
-      "destination": "https://chinhook-production-e92b.up.railway.app/:path*",
-      "permanent": false
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+      ]
     }
   ]
 }

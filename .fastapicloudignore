@@ -1,0 +1,8 @@
+# Left out of what `fastapi deploy` uploads, on top of everything .gitignore already leaves out
+# (.env and .venv among them). Only for the repository page, the Docker image or Vercel.
+static/screenshots/
+static/banner-ch.png
+Dockerfile
+.dockerignore
+vercel.json
+dist/

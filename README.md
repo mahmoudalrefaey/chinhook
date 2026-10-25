@@ -27,10 +27,11 @@ that shows exactly how it was produced.
 <br>
 <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white">
 <img alt="MySQL" src="https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white">
-<img alt="Qdrant" src="https://img.shields.io/badge/Vector%20index-Qdrant-DC244C?style=for-the-badge">
+<img alt="Qdrant Cloud" src="https://img.shields.io/badge/Vector%20index-Qdrant%20Cloud-DC244C?style=for-the-badge">
 <img alt="OpenAI-compatible" src="https://img.shields.io/badge/Models-OpenAI--compatible-412991?style=for-the-badge">
 <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?style=for-the-badge&logo=docker&logoColor=white">
-<img alt="Railway" src="https://img.shields.io/badge/Runs%20on-Railway-0B0D0E?style=for-the-badge&logo=railway&logoColor=white">
+<img alt="FastAPI Cloud" src="https://img.shields.io/badge/API%20on-FastAPI%20Cloud-009688?style=for-the-badge&logo=fastapi&logoColor=white">
+<img alt="Vercel" src="https://img.shields.io/badge/Page%20on-Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white">
 <a href="LICENSE"><img alt="Apache 2.0 License" src="https://img.shields.io/badge/License-Apache%202.0-2EA44F?style=for-the-badge"></a>
 
 </div>
@@ -219,7 +220,7 @@ Instead of filling in the form on every visit, save the connection to a file onc
 |---|---|---|
 | Your database URL, login and password, and your model API key | The server's memory, for your browser session only | Until you close the tab, change the connection, or leave the session unused for an hour. Never written to disk, a database or the page URL |
 | Your database | Read by read-only queries only. Nothing is ever written to it | n/a |
-| The index: table and column names, a one-line description of each table, and common values of category-like columns (countries, statuses, genres) | The deployment's Qdrant | Deleted after 7 days without use, or immediately with **Delete this database's index** |
+| The index: table and column names, a one-line description of each table, and common values of category-like columns (countries, statuses, genres) | The deployment's Qdrant Cloud cluster, which also computes the embeddings from that text | Deleted after 7 days without use, or immediately with **Delete this database's index** |
 | Your questions, the relevant part of your schema and the rows a query returns, plus a few sample rows per table at index time | Your model provider, through the API key you gave | As long as that provider keeps them |
 | A configuration file you export | Your own computer, downloaded straight from your session. The server keeps no copy | Until you delete it. The password and API key are in it only encrypted under your passphrase, or not at all |
 
@@ -267,19 +268,20 @@ An ordinary question costs **three model calls**: understanding the question, wr
 
 ```mermaid
 flowchart TB
-    U(["Browser"]) -->|"chinhook.vercel.app redirects here"| APP
+    U(["Browser"]) -->|"chinhook.vercel.app"| EDGE
 
-    subgraph RAILWAY["Railway project"]
-        APP["<b>App service</b><br/>Dockerfile · FastAPI (chinhook/web)<br/>LangGraph agent · fastembed in-process<br/>one session runtime per browser"]
-        QD[("<b>Qdrant</b><br/>one pair of collections per database<br/>private network only")]
-    end
+    EDGE["<b>Vercel</b><br/>serves the page (chinhook/web/static)<br/>forwards /api/* to the app"] -->|"/api/* rewrite"| APP
+
+    APP["<b>App on FastAPI Cloud</b><br/>FastAPI (chinhook/web) · one replica<br/>LangGraph agent<br/>one session runtime per browser"]
+    QD[("<b>Qdrant Cloud</b><br/>one pair of collections per database<br/>embeds the text itself (Cloud Inference)")]
+    MON["Uptime monitor"] -.->|"/readyz every 5 min"| APP
 
     subgraph YOURS["Yours, entered on the setup screen"]
         DB[("PostgreSQL / MySQL")]
         LLM["OpenAI-compatible model"]
     end
 
-    APP -->|"QDRANT_URL (private network)"| QD
+    APP -->|"QDRANT_URL · HTTPS + API key"| QD
     APP -->|"read-only SQL"| DB
     APP -->|"HTTPS · your API key"| LLM
 ```
@@ -287,7 +289,8 @@ flowchart TB
 - **One runtime per browser session.** It holds that session's database and model settings, in memory only, and every call made on the session's behalf uses it.
 - **One connection pool per database.** Every connection in it is switched to read-only before anything else runs on it.
 - **One pair of Qdrant collections per database.** They are named `chinhook_<16 hex>_tables` and `_values` from a hash of the database, schema, user and embedding model. No session can read another database's index, and reconnecting to the same database reuses its index.
-- **Embeddings run inside the app** with [fastembed](https://github.com/qdrant/fastembed) (`BAAI/bge-small-en-v1.5` by default, baked into the image at build time), so visitors only need to bring a chat model.
+- **Embeddings are computed by Qdrant Cloud** ([Cloud Inference](https://qdrant.tech/documentation/inference/cloud-inference/), `sentence-transformers/all-minilm-l6-v2` by default), so visitors only need to bring a chat model and the app itself holds no model. For a Qdrant without Cloud Inference, build the image with `--build-arg EXTRAS=local-embeddings` and set `EMBED_PROVIDER=fastembed` to run [fastembed](https://github.com/qdrant/fastembed) in-process instead.
+- **The page and the API share one origin.** Vercel serves the static page from its CDN and forwards `/api/*` to the app, so the browser only ever talks to `chinhook.vercel.app` and the Content-Security-Policy stays `'self'`. The app also serves the same page itself, on its own address.
 
 ---
 
@@ -362,9 +365,9 @@ Endpoint quirks are handled automatically. These include reasoning models that r
 │       ├── render.py         #     Markdown rendering and sanitising, result rows as JSON
 │       └── static/           #     The page: index.html, app.css, app.js (no build step)
 ├── static/                   # Served at /static: the logo and icon (banner and screenshots are for this README only)
-├── deploy/vercel/            # The fallback page for the Vercel redirect
-├── vercel.json               # Makes a Vercel project a redirect to the app
-├── Dockerfile                # The image Railway, or any Docker host, runs
+├── vercel.json               # Vercel: builds the page from chinhook/web/static and forwards /api/* to the app
+├── .fastapicloudignore       # What `fastapi deploy` leaves out of the upload
+├── Dockerfile                # The image any Docker host runs
 ├── pyproject.toml, uv.lock   # Dependencies, locked
 ├── LICENSE, NOTICE           # Apache 2.0, plus the credit and naming terms every copy keeps
 └── SECURITY.md               # How to report a vulnerability
@@ -475,6 +478,7 @@ You've reached a rate limit. Wait the number of seconds shown and try again.
 - Dependencies between the tasks of one message are limited: a filter can be shared from one task's question to another's, but tasks don't share actual query results.
 - Row counts on the Schema page come from the database's statistics and are approximate.
 - Sessions live in the memory of one app process, so a restart or redeploy asks everyone to connect again. Indexes are kept.
+- The public deployment runs on free plans: one small FastAPI Cloud replica and a single-node Qdrant Cloud cluster. It is meant for trying Hook out, not for heavy use.
 - Databases must be reachable from the internet. There is no SSH tunnel or private-network option for visitors' databases.
 - The optional login is one shared passphrase, not per-user accounts.
 

@@ -16,9 +16,10 @@ tests/
 .ruff_cache/
 .mypy_cache/
 
-# Platform CLIs
+# Platform CLIs, and the page Vercel builds (see vercel.json)
 .vercel/
-.railway/
+.fastapicloud/
+dist/
 
 # IDE / OS
 .vscode/

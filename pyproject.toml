@@ -6,8 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "cryptography>=44",
-    "fastapi>=0.115",
-    "fastembed>=0.7",
+    "fastapi[standard]>=0.115",
     "langgraph>=1.2.12",
     "markdown>=3.5",
     "nh3>=0.3.7",
@@ -20,4 +19,14 @@ dependencies = [
     "sqlglot>=30.19.0",
     "uvicorn>=0.30",
 ]
+
+[project.optional-dependencies]
+# In-process embeddings (EMBED_PROVIDER=fastembed), for a Qdrant without Cloud Inference.
+local-embeddings = [
+    "fastembed>=0.7",
+]
+
+# What FastAPI Cloud (and `fastapi dev` / `fastapi run`) starts.
+[tool.fastapi]
+entrypoint = "chinhook.web.server:app"
 

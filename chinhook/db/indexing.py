@@ -23,6 +23,7 @@ from qdrant_client.models import (
 )
 
 from chinhook.db.clients import (
+    Embedding,
     embed_batch,
     embedding_size,
     get_connection,
@@ -64,8 +65,8 @@ def _chunks(items: list, size: int):
         yield items[start:start + size]
 
 
-def _embed_all(texts: list[str]) -> list[list[float]]:
-    vectors: list[list[float]] = []
+def _embed_all(texts: list[str]) -> list[Embedding]:
+    vectors: list[Embedding] = []
     for chunk in _chunks(texts, _EMBED_BATCH_SIZE):
         vectors.extend(embed_batch(chunk))
     return vectors

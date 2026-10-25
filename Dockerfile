@@ -1,6 +1,11 @@
 # The web app. Qdrant is a separate service reached by QDRANT_URL (see README.md), and each
 # visitor's database and model are reached by whatever they enter on the setup screen, so
 # nothing about this image is specific to any of them.
+#
+# By default the image holds no embedding model: Qdrant Cloud Inference embeds the text, and
+# the app fits in 512 MB. For a Qdrant without Cloud Inference, build it with the model inside:
+#
+#   docker build --build-arg EXTRAS=local-embeddings .     (and run with EMBED_PROVIDER=fastembed)
 
 FROM python:3.12-slim
 
@@ -19,14 +24,17 @@ WORKDIR /app
 # Dependencies before source, so an ordinary code change does not invalidate the layer that
 # installs everything: only a change to these two files does.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+ARG EXTRAS=""
+RUN uv sync --frozen --no-dev ${EXTRAS:+--extra "$EXTRAS"}
 
-# The embedding model runs in-process. Downloading it here, at build time, means a fresh
-# container answers its first question without first fetching the model from the internet.
-# Setting a different EMBED_MODEL at run time still works; that model is fetched on first use.
-ARG EMBED_MODEL=BAAI/bge-small-en-v1.5
-ENV EMBED_MODEL=${EMBED_MODEL}
-RUN /app/.venv/bin/python -c "import os; from fastembed import TextEmbedding; TextEmbedding(os.environ['EMBED_MODEL'], cache_dir=os.environ['FASTEMBED_CACHE_PATH'])"
+# With local-embeddings, the model runs in-process. Downloading it here, at build time, means a
+# fresh container answers its first question without first fetching it from the internet.
+# This is EMBED_MODEL's fastembed default; a different EMBED_MODEL set at run time still works,
+# and that model is fetched on first use instead.
+ARG LOCAL_EMBED_MODEL=BAAI/bge-small-en-v1.5
+RUN if [ -n "$EXTRAS" ]; then \
+        /app/.venv/bin/python -c "import os; from fastembed import TextEmbedding; TextEmbedding('${LOCAL_EMBED_MODEL}', cache_dir=os.environ['FASTEMBED_CACHE_PATH'])"; \
+    fi
 
 COPY . .
 
@@ -35,8 +43,8 @@ RUN useradd --create-home --uid 1000 appuser \
 USER appuser
 
 # The default this binds to when $PORT is not set by the platform running this image. EXPOSE
-# is image metadata only: Railway (and any platform that injects $PORT) routes to whatever
-# port the process actually listens on regardless of this line.
+# is image metadata only: a platform that injects $PORT routes to whatever port the process
+# actually listens on, regardless of this line.
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \

@@ -160,7 +160,7 @@ def llm_settings(base_url: str, api_key: str, model: str, fast_model: str = "") 
 # ---------- which hosts this server may be asked to reach ----------
 
 # Names that only ever resolve inside a private network: the deployment's own neighbours
-# (qdrant.railway.internal, a database on the same private network) and the machine itself.
+# (a Qdrant or a database on the same private network) and the machine itself.
 _PRIVATE_SUFFIXES = (".internal", ".local", ".localhost", ".localdomain", ".lan", ".home.arpa")
 
 

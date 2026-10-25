@@ -26,6 +26,7 @@ BRAND = Path(__file__).resolve().parents[2] / "static"
 # file of a few hundred bytes; the limit leaves plenty of room above that.
 MAX_BODY = 1_000_000
 
+# vercel.json sends the same headers with the page when Vercel serves it: keep the two alike.
 _CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "
     "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
@@ -69,7 +70,24 @@ async def _guard(request: Request, call_next):
 
 @app.get("/healthz", include_in_schema=False)
 def _health() -> dict:
+    # Liveness only: the process is up. The platform restarts the app when this fails, which
+    # would not help when the problem is Qdrant, so Qdrant is checked by /readyz instead.
     return {"ok": True}
+
+
+@app.get("/readyz", include_in_schema=False)
+def _ready() -> JSONResponse:
+    # Whether a visitor could use the app right now: it started, and its Qdrant answers. For an
+    # uptime monitor; polling it also counts as use of a Qdrant Cloud free cluster, which is
+    # suspended after a week without any. The reason is left to the logs, never shown here.
+    try:
+        from chinhook.db.clients import qdrant
+
+        qdrant.get_collections()
+    except Exception as exc:  # noqa: BLE001
+        print(f"/readyz: not ready: {type(exc).__name__}: {exc}")
+        return JSONResponse({"ok": False}, status_code=503)
+    return JSONResponse({"ok": True})
 
 
 @app.get("/", include_in_schema=False)
